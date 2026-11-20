@@ -15,6 +15,7 @@ const OnlyYou = 1 << 6;
 // commands that answer with the same words every time, straight away and for everyone
 const Quick: Record<string, string> = {
   whatis: "here son https://realidkroo.github.io/Mochy-Music/wiki/#modules-types",
+  src: "https://github.com/ryukeicii/mochy-modulebot",
 };
 
 export async function interaction(request: Request, env: Env, ctx: Context): Promise<Response> {

@@ -296,12 +296,18 @@ test("publishing fills the store page", async () => {
   assert.equal((await command("publish", "maker2", "3004", "0", "3001")).answer, "Published, but I couldn't hand out the publisher role. The bot needs Manage Roles, with its own role above that one. | public: Published **Renamed Thing** 2.2.");
 });
 
-test("/whatis points at the wiki, for everyone", async () => {
-  const text = JSON.stringify({ application_id: "client", token: "t", type: 2, data: { name: "whatis" } });
+// a command that answers straight away, in the open, with what it said
+async function quick(name: string): Promise<string> {
+  const text = JSON.stringify({ application_id: "client", token: "t", type: 2, data: { name } });
   const signature = await crypto.subtle.sign({ name: "Ed25519" }, keys.privateKey, new TextEncoder().encode("1" + text));
   const response = await worker.fetch(new Request("https://feed.test/interactions", { method: "POST", body: text, headers: { "X-Signature-Ed25519": Buffer.from(signature).toString("hex"), "X-Signature-Timestamp": "1" } }), env, ctx);
   const body = (await response.json()) as { type: number; data: { content: string; flags?: number } };
   assert.equal(body.type, 4);
-  assert.equal(body.data.content, "here son https://realidkroo.github.io/Mochy-Music/wiki/#modules-types");
-  assert.equal(body.data.flags, undefined);
+  assert.equal(body.data.flags, undefined, "everyone sees it");
+  return body.data.content;
+}
+
+test("/whatis and /src answer everyone with their links", async () => {
+  assert.equal(await quick("whatis"), "here son https://realidkroo.github.io/Mochy-Music/wiki/#modules-types");
+  assert.equal(await quick("src"), "https://github.com/ryukeicii/mochy-modulebot");
 });

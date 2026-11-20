@@ -32,6 +32,7 @@ something's wrong, only you see why.
 | `/banner` | The message's first picture becomes the store page's banner. |
 | `/icon` | The message's first picture becomes the store icon, in place of the zip's own. |
 | `/whatis` | Answers everyone with a link to the module guide. |
+| `/src` | Answers everyone with a link to this repo. |
 
 Pictures are copied into the worker (up to 8 MB each), since Discord's own picture links run out after a day.
 
@@ -88,4 +89,4 @@ Every call but `/login`, `/callback`, `/icons/<post>`, `/pictures/...` and `/int
 ## Tests
 
 `npm test` (Node 23 or newer, which runs TypeScript as is). They read a small stand-in module zip, check the permission maths, and run
-the whole worker against a pretend Discord: signing in, the cron, the list, the paid lock, the downloads, the store commands and `/whatis`; and the online connection against a pretend gateway.
+the whole worker against a pretend Discord: signing in, the cron, the list, the paid lock, the downloads, the store commands, `/whatis` and `/src`; and the online connection against a pretend gateway.

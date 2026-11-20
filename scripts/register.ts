@@ -35,6 +35,7 @@ const commands = [
   { name: "banner", description: "Set the banner on a module's store page", options: message("A message with the picture: its link, or its id in the post") },
   { name: "icon", description: "Set a module's icon in the store", options: message("A message with the picture: its link, or its id in the post") },
   { name: "whatis", description: "What Mochy modules are, and how to make one" },
+  { name: "src", description: "Where this bot's code lives" },
 ].map((c) => ({ type: 1, ...c }));
 
 // a server's own command shows up straight away; a global one can take an hour
