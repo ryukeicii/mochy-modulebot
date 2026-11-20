@@ -1,6 +1,6 @@
 // reads every module forum on a timer and keeps one index of the published modules in them, plus what's needed to tell who may see the paid ones
 
-import { archivedThreads, bot, type Message, type Thread } from "./discord.ts";
+import { archivedThreads, bot, looksHidden, type Message, type Thread } from "./discord.ts";
 import { forumsOf, type Env, type Forum } from "./env.ts";
 import { loadListing, type Listing } from "./listing.ts";
 import type { GuildFacts, Overwrite } from "./permissions.ts";
@@ -22,7 +22,8 @@ export interface PostRead {
   hints: Record<string, boolean>;
   hasIcon: boolean;
   created: string | null;
-  zip: { message: string; attachment: string; filename: string; size: number };
+  // null for a module published as a link or a web page
+  zip: { message: string; attachment: string; filename: string; size: number } | null;
   lastMessageId: string | null;
 }
 
@@ -70,6 +71,10 @@ export async function buildIndex(env: Env): Promise<FeedIndex> {
       // a post stays out of the store until its maker runs /publish
       const listing = listings[i];
       if (!listing) continue;
+      if (isLinked(listing)) {
+        modules.push(toModule(env, forum, tagNames, thread, linkedRead(thread, listing), listing));
+        continue;
+      }
       const known = previous.get(thread.id);
       let read: PostRead | null;
       try {
@@ -107,8 +112,10 @@ export async function refreshPost(env: Env, thread: Thread, read?: PostRead): Pr
   // the first list isn't in yet, so building it reads this post too
   if (!index) return (await buildIndex(env)).modules.find((m) => m.id === thread.id) ?? null;
   const listing = await loadListing(env, thread.id);
-  const postRead = read ?? index.modules.find((m) => m.id === thread.id) ?? (await readPost(env, thread));
-  if (!listing || !postRead) return null;
+  if (!listing) return null;
+  const known = index.modules.find((m) => m.id === thread.id && m.zip);
+  const postRead = isLinked(listing) ? linkedRead(thread, listing) : read ?? known ?? (await readPost(env, thread));
+  if (!postRead) return null;
   const module = toModule(env, forum, tagsOf(await bot<Channel>(env, `/channels/${forum.id}`)), thread, postRead, listing);
   index.modules = [...index.modules.filter((m) => m.id !== thread.id), module].sort(newestFirst);
   index.updated = Date.now();
@@ -131,6 +138,27 @@ function toModule(env: Env, forum: Forum, tagNames: Map<string, string>, thread:
   };
 }
 
+function isLinked(listing: Listing): boolean {
+  return listing.install === "link" || listing.install === "web";
+}
+
+// a module published as a link has no zip to read, so the store shows what the post and its listing say
+function linkedRead(thread: Thread, listing: Listing): PostRead {
+  return {
+    id: thread.id,
+    manifestName: null,
+    moduleId: null,
+    version: null,
+    author: listing.author ?? null,
+    description: "",
+    hints: {},
+    hasIcon: false,
+    created: thread.thread_metadata?.create_timestamp ?? null,
+    zip: null,
+    lastMessageId: thread.last_message_id,
+  };
+}
+
 function tagsOf(channel: Channel): Map<string, string> {
   return new Map((channel.available_tags ?? []).map((t) => [t.id, t.name]));
 }
@@ -150,6 +178,8 @@ interface Pick {
 // the zip picked with /update, or else the newest one the post's own author attached; a later zip in the same post is an update
 async function readPost(env: Env, thread: Thread): Promise<PostRead | null> {
   const messages = await bot<Message[]>(env, `/channels/${thread.id}/messages?limit=50`);
+  // with message content hidden every post would look zipless and fall out of the store, so the run keeps what it had instead
+  if (messages.length && messages.every(looksHidden)) throw new Error("every message came back empty; message content intent is off");
   const starter = messages.find((m) => m.id === thread.id) ?? null;
   const newest = messages.find((m) => m.author.id === thread.owner_id && m.attachments.some(isZip));
   const pick = (await env.FEED.get(`pick:${thread.id}`, "json")) as Pick | null;

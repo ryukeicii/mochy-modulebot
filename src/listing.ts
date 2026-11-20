@@ -12,8 +12,16 @@ export interface Picture {
   type: string;
 }
 
-// a post shows in the store only once it has one of these, made by /publish
+// how the store adds a module: the post's zip, a link mochy adds like a pasted one (github and the like), or a web page it opens
+export type Install = "zip" | "link" | "web";
+
+// a post shows in the store only once it has one of these, made by /publish, /publishlink or /publishweb
 export interface Listing {
+  // missing on listings made before links could be published, which are all zips
+  install?: Install;
+  link?: string | null;
+  // who made a linked module, since there's no manifest to say
+  author?: string | null;
   publisher: string;
   description: string;
   banner: Picture | null;

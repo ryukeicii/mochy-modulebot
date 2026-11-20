@@ -1,10 +1,10 @@
-// the module commands: /publish puts a post in the store, /update swaps its zip, and /preview, /banner and /icon set its store page's pictures
+// the module commands: /publish, /publishlink and /publishweb put a post in the store, /update swaps its zip, and /preview, /banner and /icon set its store page's pictures
 
-import { bot, botWrite, type Attachment, type Message, type Thread } from "./discord.ts";
+import { bot, botWrite, looksHidden, type Attachment, type Message, type Thread } from "./discord.ts";
 import { forumsOf, type Env } from "./env.ts";
 import { isZip, pickZip, refreshPost, type FeedModule } from "./feed.ts";
 import { cleanTitle } from "./posts.ts";
-import { dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, savePicture, saveListing, type Listing } from "./listing.ts";
+import { dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, savePicture, saveListing, type Install, type Listing } from "./listing.ts";
 
 // mods can change anyone's post: administrator, manage messages or manage threads
 const ModBits = (1n << 3n) | (1n << 13n) | (1n << 34n);
@@ -40,6 +40,8 @@ type Run = (target: Target, env: Env) => Promise<Outcome>;
 
 export const Commands: Record<string, (event: Interaction, env: Env) => Promise<Outcome>> = {
   publish: (event, env) => withTarget(event, env, publish),
+  publishlink: (event, env) => withTarget(event, env, (target) => publishLinked(target, env, "link")),
+  publishweb: (event, env) => withTarget(event, env, (target) => publishLinked(target, env, "web")),
   update: (event, env) => withTarget(event, env, update),
   preview: (event, env) => withTarget(event, env, preview),
   banner: (event, env) => withTarget(event, env, (target) => onePicture(target, env, "banner")),
@@ -62,6 +64,7 @@ async function findTarget(event: Interaction, env: Env): Promise<Target | string
   if (thread.owner_id !== userId && !isMod) return "Only the person who made this post can change it.";
   const message = await bot<Message>(env, `/channels/${thread.id}/messages/${where.message}`).catch(() => null);
   if (!message) return "I couldn't find that message.";
+  if (looksHidden(message)) return "I can't see what's in messages right now. Turn on Message Content Intent for the bot in the Developer Portal (Bot page), then try again.";
   return { thread, message, userId };
 }
 
@@ -83,6 +86,9 @@ async function publish({ thread, message, userId }: Target, env: Env): Promise<O
   if (!read) return { text: NotAModule };
   const old = await loadListing(env, thread.id);
   const listing: Listing = {
+    install: "zip",
+    link: null,
+    author: null,
     publisher: userId,
     description: message.content.trim().slice(0, MaxDescription) || old?.description || "",
     banner: await savePicture(env, thread.id, pictures[0]),
@@ -95,9 +101,45 @@ async function publish({ thread, message, userId }: Target, env: Env): Promise<O
   return { text: `Published **${nameOf(module, thread)}**${read.version ? ` ${read.version}` : ""}.`, done: true, note: await giveRole(env, thread.owner_id) };
 }
 
+// a module published with a link and a picture; the store adds it from the link, or opens the page for a web one
+async function publishLinked({ thread, message, userId }: Target, env: Env, install: Install): Promise<Outcome> {
+  const link = firstLink(message.content);
+  const pictures = message.attachments.filter(isImage);
+  if (!link || !pictures.length) {
+    const what = install === "link" ? "the module's link (a GitHub project or a module's address)" : "the web page's link";
+    return { text: `To publish this way, point me at a message with ${what} and at least one picture. The first picture becomes the store banner.` };
+  }
+  if (tooBig(pictures[0])) return { text: tooBigText(pictures[0]) };
+  const old = await loadListing(env, thread.id);
+  const words = message.content.replace(`<${link}>`, "").replace(link, "").replace(/ {2,}/g, " ").trim();
+  const listing: Listing = {
+    install,
+    link,
+    author: message.author.global_name ?? message.author.username,
+    publisher: userId,
+    description: words.slice(0, MaxDescription) || old?.description || "",
+    banner: await savePicture(env, thread.id, pictures[0]),
+    previews: old?.previews ?? [],
+    icon: old?.icon ?? null,
+    publishedAt: old?.publishedAt ?? Date.now(),
+  };
+  await changeListing(env, thread.id, old, listing);
+  const module = await refreshPost(env, thread);
+  const how = install === "link" ? "added from its link" : "a web page";
+  return { text: `Published **${nameOf(module, thread)}**, ${how}.`, done: true, note: await giveRole(env, thread.owner_id) };
+}
+
+// the first web address in a message, without the brackets or punctuation people put around links
+function firstLink(content: string): string | null {
+  return content.match(/https:\/\/[^\s<>()*`|]+/)?.[0].replace(/[.,!?;:]+$/, "") ?? null;
+}
+
 async function update({ thread, message }: Target, env: Env): Promise<Outcome> {
   const old = await loadListing(env, thread.id);
   if (!old) return { text: NotPublished };
+  if (old.install === "link" || old.install === "web") {
+    return { text: "This one is published as a link, so there's no zip to swap. Run /publishlink or /publishweb again to change its link, or /publish to switch it to a zip." };
+  }
   if (!message.attachments.some(isZip)) return { text: "I couldn't find a .zip on that message." };
   const picture = message.attachments.find(isImage);
   if (picture && tooBig(picture)) return { text: tooBigText(picture) };

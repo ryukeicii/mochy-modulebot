@@ -11,7 +11,8 @@ links (which run out after a day) are always fresh.
 
 ## Posting a module
 
-One forum post per module, and **a post only shows in the store once its maker runs `/publish`**.
+One forum post per module, and **a post only shows in the store once its maker publishes it** with `/publish`, `/publishlink`
+or `/publishweb`.
 
 - **Title:** the module's name in the store. A `[LOOKS]` or `[PLAYERTHEME]` prefix is fine; it's taken off. Renaming the post
   renames the module within 10 minutes.
@@ -27,6 +28,8 @@ something's wrong, only you see why.
 | Command | What it does |
 |---|---|
 | `/publish` | Puts the post in the store. The message needs the `.zip` and at least one picture: the first picture becomes the banner and the message's words the description. The author gets the publisher role. |
+| `/publishlink` | For a module people add by link (a GitHub project or a module's address): the message needs the link and a picture. The store's ADD adds it from that link, so its updates come from there too. |
+| `/publishweb` | For a module that lives on a web page: the message needs the page's link and a picture, and the store's button opens it. |
 | `/update` | Makes that message's zip the module now. A picture next to it becomes the new banner. Without it, the newest zip from the author takes over within 10 minutes; a picked zip stays until the author posts a newer one. |
 | `/preview` | The message's pictures (up to 8) become the store page's previews. |
 | `/banner` | The message's first picture becomes the store page's banner. |
@@ -34,7 +37,11 @@ something's wrong, only you see why.
 | `/whatis` | Answers everyone with a link to the module guide. |
 | `/src` | Answers everyone with a link to this repo. |
 
-Pictures are copied into the worker (up to 8 MB each), since Discord's own picture links run out after a day.
+For the link ones the message's words, without the link, become the description, and its author shows as the maker.
+`/update` only swaps zips; run the link command again to change a link, or `/publish` to switch to a zip.
+
+Pictures are copied into the worker (up to 8 MB each), since Discord's own picture links run out after a day. If a command
+answers that it can't see what's in messages, Message Content Intent is off in the Developer Portal.
 
 ## Setting it up
 
@@ -80,8 +87,8 @@ Every call but `/login`, `/callback`, `/icons/<post>`, `/pictures/...` and `/int
 |---|---|
 | `GET /login?state=<app state>` | Off to Discord to sign in; comes back to `mochy-modules://signed-in?session=…&state=…` (or `error=…`) |
 | `GET /me` | `name`, `avatar`, `member`, `invite` |
-| `GET /modules` | `me` (as `/me`) and the published modules: `id` (the post), `name`, `moduleId`, `version`, `author`, `description`, `kind` (`look`, `player`, `source`, `other`), `tags`, `paid`, `locked`, `icon`, `banner`, `previews`, `postUrl`, `size`. `403 not_member` with the invite when they're not in the server, `503 warming_up` before the first read |
-| `GET /modules/<post>/zip` | The module's zip; `403 locked` for a paid one they can't see |
+| `GET /modules` | `me` (as `/me`) and the published modules: `id` (the post), `name`, `moduleId`, `version`, `author`, `description`, `kind` (`look`, `player`, `source`, `other`), `tags`, `paid`, `locked`, `icon`, `banner`, `previews`, `postUrl`, `size`, `install` (`zip`, `link` or `web`) and `link`. `403 not_member` with the invite when they're not in the server, `503 warming_up` before the first read |
+| `GET /modules/<post>/zip` | The module's zip; `403 locked` for a paid one they can't see, `404 not_a_zip` for a linked one |
 | `GET /icons/<post>` | The icon from the zip |
 | `GET /pictures/<post>/<id>` | A banner, preview or `/icon` picture, cached for good since a new picture gets a new id |
 | `POST /signout` | Forgets the session |

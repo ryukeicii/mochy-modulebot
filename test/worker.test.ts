@@ -49,6 +49,11 @@ const zipFile = (id: string) => ({ id, filename: "look.zip", size: zipBytes.leng
 const withPicture = { id: "1004", content: "A glass for the bars.", author: { id: "maker", username: "maker" }, attachments: [picture("pic1"), zipFile("z1004")] };
 const twoPictures = { id: "1005", content: "", author: { id: "maker", username: "maker" }, attachments: [picture("pic2"), picture("pic3")] };
 const hiddenPublish = { id: "3004", content: "Fresh look.", author: { id: "maker2", username: "maker2" }, attachments: [picture("pic9"), zipFile("z3004")] };
+// a message as discord sends it with message content intent off, and two that publish by link
+const hidden = { id: "1006", content: "", author: { id: "maker", username: "maker" }, attachments: [] };
+const githubLink = { id: "3005", content: "Get it here https://github.com/someone/glass-module and enjoy", author: { id: "maker2", username: "maker2", global_name: "Maker Two" }, attachments: [picture("pic7")] };
+const webPage = { id: "3006", content: "Try it on <https://example.com/glass>.", author: { id: "maker2", username: "maker2" }, attachments: [picture("pic8")] };
+let hideEverything = false;
 const rolesGiven: string[] = [];
 let roleFails = false;
 
@@ -90,7 +95,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       "/channels/paid": { available_tags: [], permission_overwrites: [{ id: "g", type: 0, allow: "0", deny: View }, { id: "buyer", type: 0, allow: View, deny: "0" }] },
       "/channels/free/threads/archived/public": { threads: [], has_more: false },
       "/channels/paid/threads/archived/public": { threads: [paidThread], has_more: false },
-      "/channels/1001/messages": [...later, ...post("1001")],
+      "/channels/1001/messages": hideEverything ? [{ ...hidden, id: "1001" }] : [...later, ...post("1001")],
       "/channels/2001/messages": post("2001"),
       "/channels/1001": freeThread,
       "/channels/1001/messages/1001": post("1001")[0],
@@ -102,6 +107,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       "/channels/3001/messages": [hiddenPublish, ...post("3001")],
       "/channels/3001/messages/3001": post("3001")[0],
       "/channels/3001/messages/3004": hiddenPublish,
+      "/channels/3001/messages/3005": githubLink,
+      "/channels/3001/messages/3006": webPage,
+      "/channels/1001/messages/1006": hidden,
       "/channels/2001/messages/2001": post("2001")[0],
     };
     return path in routes ? ok(routes[path]) : new Response("{}", { status: 404 });
@@ -294,6 +302,39 @@ test("publishing fills the store page", async () => {
   // without the right to hand out roles the publish still goes through, and only the publisher hears about the role
   roleFails = true;
   assert.equal((await command("publish", "maker2", "3004", "0", "3001")).answer, "Published, but I couldn't hand out the publisher role. The bot needs Manage Roles, with its own role above that one. | public: Published **Renamed Thing** 2.2.");
+});
+
+test("publishing by link or as a web page, and hidden messages", async () => {
+  const member = await signIn("member");
+  const listed = async () => Object.fromEntries(((await (await call("/modules", member)).json()) as { modules: Array<Record<string, any>> }).modules.map((m) => [m.id, m]));
+
+  assert.match((await command("publish", "maker", "1006")).answer ?? "", /Turn on Message Content Intent/);
+
+  roleFails = false;
+  assert.equal((await command("publishlink", "maker2", "3005", "0", "3001")).answer, done("Published **Renamed Thing**, added from its link."));
+  let store = await listed();
+  assert.equal(store["3001"].install, "link");
+  assert.equal(store["3001"].link, "https://github.com/someone/glass-module");
+  assert.equal(store["3001"].description, "Get it here and enjoy");
+  assert.equal(store["3001"].author, "Maker Two");
+  assert.equal(store["3001"].banner, "https://feed.test/pictures/3001/pic7");
+  assert.equal((await call("/modules/3001/zip", member)).status, 404, "a linked module has no zip to hand out");
+  assert.match((await command("update", "maker2", "3004", "0", "3001")).answer ?? "", /published as a link/);
+
+  assert.equal((await command("publishweb", "maker2", "3006", "0", "3001")).answer, done("Published **Renamed Thing**, a web page."));
+  assert.match((await command("publishweb", "maker2", "3004", "0", "3001")).answer ?? "", /web page's link and at least one picture/);
+
+  // the cron keeps a web module as it is, and a post whose messages all come back hidden keeps its zip instead of leaving the store
+  hideEverything = true;
+  freeThread.last_message_id = "1007";
+  await worker.scheduled({}, env, ctx);
+  await Promise.all(pending);
+  store = await listed();
+  assert.equal(store["3001"].install, "web");
+  assert.equal(store["3001"].link, "https://example.com/glass");
+  assert.equal(store["1001"].install, "zip");
+  assert.ok(store["1001"].size > 0, "the hidden post kept its zip");
+  hideEverything = false;
 });
 
 // a command that answers straight away, in the open, with what it said

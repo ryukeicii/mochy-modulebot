@@ -137,11 +137,13 @@ function listFor(index: FeedIndex, session: Session, origin: string) {
       tags: m.tags,
       paid: m.paid,
       locked,
+      install: m.listing.install ?? "zip",
+      link: m.listing.link ?? null,
       icon: m.listing.icon ? picture(m.listing.icon) : m.hasIcon ? `${origin}/icons/${m.id}` : null,
       banner: m.listing.banner ? picture(m.listing.banner) : null,
       previews: m.listing.previews.map(picture),
       postUrl: m.postUrl,
-      size: m.zip.size,
+      size: m.zip?.size ?? null,
     }];
   });
 }
@@ -153,8 +155,11 @@ async function download(postId: string, index: FeedIndex, session: Session, env:
   const locked = lockedFor(module, index, session);
   if (locked === null) return json({ error: "not_found" }, 404);
   if (locked) return json({ error: "locked" }, 403);
-  const message = await bot<Message>(env, `/channels/${postId}/messages/${module.zip.message}`);
-  const attachment = message.attachments.find((a) => a.id === module.zip.attachment) ?? message.attachments.find((a) => a.filename.toLowerCase().endsWith(".zip"));
+  // a linked module is added from its link, so there's no zip to hand over
+  const zip = module.zip;
+  if (!zip) return json({ error: "not_a_zip" }, 404);
+  const message = await bot<Message>(env, `/channels/${postId}/messages/${zip.message}`);
+  const attachment = message.attachments.find((a) => a.id === zip.attachment) ?? message.attachments.find((a) => a.filename.toLowerCase().endsWith(".zip"));
   if (!attachment) return json({ error: "gone" }, 410);
   const file = await fetch(attachment.url);
   if (!file.ok || !file.body) return json({ error: "gone" }, 502);

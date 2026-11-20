@@ -30,6 +30,8 @@ if (app.verify_key !== setting("PUBLIC_KEY")) throw new Error(`put PUBLIC_KEY = 
 const message = (description: string) => [{ name: "message", type: 3, required: true, description }];
 const commands = [
   { name: "publish", description: "Put your module in Mochy's store: a message with its .zip and a picture", options: message("The message's link, or its id when you're in the post") },
+  { name: "publishlink", description: "Publish a module people add by link (GitHub and the like): a message with the link and a picture", options: message("The message's link, or its id when you're in the post") },
+  { name: "publishweb", description: "Publish a module as a web page the store opens: a message with the page's link and a picture", options: message("The message's link, or its id when you're in the post") },
   { name: "update", description: "Update a module from a message with its new zip", options: message("The message's link, or its id when you're in the post") },
   { name: "preview", description: "Set the preview pictures on a module's store page", options: message("A message with the pictures: its link, or its id in the post") },
   { name: "banner", description: "Set the banner on a module's store page", options: message("A message with the picture: its link, or its id in the post") },

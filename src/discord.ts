@@ -93,6 +93,13 @@ export interface Message {
   content: string;
   author: { id: string; username: string; global_name?: string | null };
   attachments: Attachment[];
+  embeds?: unknown[];
+  sticker_items?: unknown[];
+}
+
+// no message is ever truly empty, so one with nothing at all means discord is hiding it: message content intent is off
+export function looksHidden(message: Message): boolean {
+  return !message.content && !message.attachments.length && !message.embeds?.length && !message.sticker_items?.length;
 }
 
 // a forum's archived posts, newest first; posts go quiet and archive themselves, so most modules end up here
