@@ -1,0 +1,39 @@
+# mochy's module feed, a cloudflare worker; README.md walks through setting it up
+name = "mochy-module-feed"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# reads the forums every 10 minutes
+[triggers]
+crons = ["*/10 * * * *"]
+
+# the module index, the icons and the sign-in sessions; make it with: npx wrangler kv namespace create FEED
+[[kv_namespaces]]
+binding = "FEED"
+id = "694913b53a714a4ab8c43652862ad998"
+
+# keeps the bot online in discord by holding its gateway connection
+[[durable_objects.bindings]]
+name = "PRESENCE"
+class_name = "Presence"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Presence"]
+
+[vars]
+# the discord application's client id (Developer Portal, OAuth2)
+CLIENT_ID = "1573464144278200340"
+# what discord signs slash commands with (Developer Portal, General Information, Public Key); npm run register checks it
+PUBLIC_KEY = "dd61f8853856edd01f71e742ea1c9b23fc7bcf8762a3ba2144ba0056fee2e09d"
+# mochy's bar
+GUILD_ID = "916351383341522994"
+# every forum that holds modules; paid ones are locked to whoever can see them in discord
+FORUMS = '[{"id": "1566642801482006599", "paid": false}]'
+INVITE_URL = "https://discord.gg/NTmqVphbRY"
+# the role someone gets for publishing a module; the bot needs Manage Roles and its own role above this one
+PUBLISHER_ROLE = "1573471059636654090"
+# where mochy waits for the sign-in to come back
+APP_REDIRECT = "mochy-modules://signed-in"
+
+# secrets, never in this file: npx wrangler secret put BOT_TOKEN, npx wrangler secret put CLIENT_SECRET
