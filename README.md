@@ -36,6 +36,10 @@ something's wrong, only you see why.
 | `/icon` | The message's first picture becomes the store icon, in place of the zip's own. |
 | `/whatis` | Answers everyone with a link to the module guide. |
 | `/src` | Answers everyone with a link to this repo. |
+| `/help` | Lists every command and what it does, only for whoever asked. |
+
+Every command's name, its short line in Discord and its line in `/help` live in `src/catalog.ts`, which `npm run register`
+reads too, so a new command goes there first.
 
 For the link ones the message's words, without the link, become the description, and its author shows as the maker.
 `/update` only swaps zips; run the link command again to change a link, or `/publish` to switch to a zip.
@@ -96,4 +100,4 @@ Every call but `/login`, `/callback`, `/icons/<post>`, `/pictures/...` and `/int
 ## Tests
 
 `npm test` (Node 23 or newer, which runs TypeScript as is). They read a small stand-in module zip, check the permission maths, and run
-the whole worker against a pretend Discord: signing in, the cron, the list, the paid lock, the downloads, the store commands, `/whatis` and `/src`; and the online connection against a pretend gateway.
+the whole worker against a pretend Discord: signing in, the cron, the list, the paid lock, the downloads, the store commands, `/whatis`, `/src` and `/help`; and the online connection against a pretend gateway.

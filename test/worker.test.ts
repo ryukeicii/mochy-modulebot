@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import worker from "../src/index.ts";
+import { CommandList } from "../src/catalog.ts";
 import type { Env, KV } from "../src/env.ts";
 
 const zipBytes = readFileSync(new URL("./fixtures/look.zip", import.meta.url));
@@ -337,18 +338,25 @@ test("publishing by link or as a web page, and hidden messages", async () => {
   hideEverything = false;
 });
 
-// a command that answers straight away, in the open, with what it said
-async function quick(name: string): Promise<string> {
+// a command that answers straight away, with what it said and whether everyone sees it
+async function quick(name: string, onlyYou = false): Promise<string> {
   const text = JSON.stringify({ application_id: "client", token: "t", type: 2, data: { name } });
   const signature = await crypto.subtle.sign({ name: "Ed25519" }, keys.privateKey, new TextEncoder().encode("1" + text));
   const response = await worker.fetch(new Request("https://feed.test/interactions", { method: "POST", body: text, headers: { "X-Signature-Ed25519": Buffer.from(signature).toString("hex"), "X-Signature-Timestamp": "1" } }), env, ctx);
   const body = (await response.json()) as { type: number; data: { content: string; flags?: number } };
   assert.equal(body.type, 4);
-  assert.equal(body.data.flags, undefined, "everyone sees it");
+  assert.equal(body.data.flags, onlyYou ? 1 << 6 : undefined);
   return body.data.content;
 }
 
 test("/whatis and /src answer everyone with their links", async () => {
   assert.equal(await quick("whatis"), "here son https://realidkroo.github.io/Mochy-Music/wiki/#modules-types");
   assert.equal(await quick("src"), "https://github.com/ryukeicii/mochy-modulebot");
+});
+
+test("/help lists every command, only for whoever asked", async () => {
+  const help = await quick("help", true);
+  for (const command of CommandList) assert.ok(help.includes(`\`/${command.name}\``), `/help mentions /${command.name}`);
+  assert.ok(help.length < 2000, "fits in one discord message");
+  for (const command of CommandList) assert.ok(command.description.length <= 100, `/${command.name}'s description fits discord`);
 });

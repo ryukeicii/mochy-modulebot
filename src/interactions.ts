@@ -1,5 +1,6 @@
 // discord's slash commands reach the worker here: the signature check, the "thinking..." and the answer once the command is done
 
+import { helpText } from "./catalog.ts";
 import { Commands, type Interaction, type Outcome } from "./commands.ts";
 import { deleteReply, editReply, followUp } from "./discord.ts";
 import type { Context, Env } from "./env.ts";
@@ -12,10 +13,11 @@ const ThinkingAnswer = 5;
 // only the person who ran the command sees this answer, so mistakes don't fill a post with bot chatter
 const OnlyYou = 1 << 6;
 
-// commands that answer with the same words every time, straight away and for everyone
-const Quick: Record<string, string> = {
-  whatis: "here son https://realidkroo.github.io/Mochy-Music/wiki/#modules-types",
-  src: "https://github.com/ryukeicii/mochy-modulebot",
+// commands that answer with the same words every time, straight away; /help only to whoever asked, so it doesn't fill a channel
+const Quick: Record<string, { text: string; onlyYou?: boolean }> = {
+  whatis: { text: "here son https://realidkroo.github.io/Mochy-Music/wiki/#modules-types" },
+  src: { text: "https://github.com/ryukeicii/mochy-modulebot" },
+  help: { text: helpText(), onlyYou: true },
 };
 
 export async function interaction(request: Request, env: Env, ctx: Context): Promise<Response> {
@@ -24,7 +26,7 @@ export async function interaction(request: Request, env: Env, ctx: Context): Pro
   const event = JSON.parse(body) as Interaction;
   if (event.type === Ping) return reply({ type: Pong });
   const quick = event.type === Command ? Quick[event.data?.name ?? ""] : undefined;
-  if (quick) return reply({ type: Answer, data: { content: quick, allowed_mentions: { parse: [] } } });
+  if (quick) return reply({ type: Answer, data: { content: quick.text, allowed_mentions: { parse: [] }, ...(quick.onlyYou ? { flags: OnlyYou } : {}) } });
   const run = event.type === Command ? Commands[event.data?.name ?? ""] : undefined;
   if (run) {
     // reading a zip or a picture can take longer than the 3 seconds discord waits, so it says "thinking" first and answers when done
