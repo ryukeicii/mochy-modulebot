@@ -1,6 +1,7 @@
 // mochy's module feed: discord sign-in for the app, the module list for people in the server, and the zips; a cron and the module commands keep the list fresh, and the bot stays online
 
-import { bot, tokens, type Message } from "./discord.ts";
+import { commandPayloads } from "./catalog.ts";
+import { attachmentsOf, bot, botWrite, tokens, type Message } from "./discord.ts";
 import type { Context, Env } from "./env.ts";
 import { buildIndex, loadIndex, type FeedIndex, type FeedModule } from "./feed.ts";
 import { interaction } from "./interactions.ts";
@@ -14,28 +15,34 @@ export { Presence } from "./presence.ts";
 
 // who they are, and which roles they have in the server, which is all the paid forum's lock needs
 const Scopes = "identify guilds.members.read";
+let commandsCheckedAt = 0;
 
 export default {
   async fetch(request: Request, env: Env, ctx: Context): Promise<Response> {
     const url = new URL(request.url);
+    if (commandsCheckedAt === 0 || (commandsCheckedAt > 0 && Date.now() - commandsCheckedAt > 60_000)) {
+      commandsCheckedAt = Date.now();
+      ctx.waitUntil(syncCommands(env));
+    }
     try {
       if (request.method === "POST" && url.pathname === "/interactions") return await interaction(request, env, ctx);
       if (request.method === "GET" && url.pathname === "/login") {
         const state = url.searchParams.get("state") ?? "";
         if (!(await signedByOfficialBuild(env, url.searchParams.get("t"), url.searchParams.get("sig"), "GET", "/login", state))) return unofficial();
-        return login(url, env);
+        return await login(url, env);
       }
       if (request.method === "GET" && url.pathname === "/callback") return await callback(url, env);
       if (request.method === "GET" && url.pathname.startsWith("/icons/")) return await icon(url.pathname.slice(7), env);
       if (request.method === "GET" && url.pathname.startsWith("/pictures/")) return await picture(url.pathname.slice(10), env);
+      // check the official build signature before touching kv or discord, so unsigned traffic can't trigger session lookups or token refreshes
+      const bearer = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+      const signature = [request.headers.get("X-Mochy-Time"), request.headers.get("X-Mochy-Sign")] as const;
+      if (!(await signedByOfficialBuild(env, signature[0], signature[1], request.method, url.pathname, bearer))) return unofficial();
       const signedIn = await load(env, request);
       if (request.method === "POST" && url.pathname === "/signout") {
         if (signedIn) await forget(env, signedIn.id);
         return json({ ok: true });
       }
-      const bearer = request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
-      const signature = [request.headers.get("X-Mochy-Time"), request.headers.get("X-Mochy-Sign")] as const;
-      if (!(await signedByOfficialBuild(env, signature[0], signature[1], request.method, url.pathname, bearer))) return unofficial();
       if (!signedIn) return json({ error: "signed_out" }, 401);
       const { session } = signedIn;
       if (request.method === "GET" && url.pathname === "/me") return json(me(session, env));
@@ -62,10 +69,30 @@ export default {
   },
 
   async scheduled(_event: unknown, env: Env, ctx: Context): Promise<void> {
+    ctx.waitUntil(syncCommands(env));
     ctx.waitUntil(buildIndex(env));
     ctx.waitUntil(keepOnline(env));
   },
 };
+
+// pushes changed slash commands to discord using the worker's own bot token, skipping when the hash already matches
+async function syncCommands(env: Env): Promise<void> {
+  try {
+    const payload = commandPayloads();
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(payload)));
+    const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    if ((await env.FEED.get("commands_hash")) === hash) {
+      commandsCheckedAt = -1;
+      return;
+    }
+    await botWrite(env, "PUT", `/applications/${env.CLIENT_ID}/guilds/${env.GUILD_ID}/commands`, payload);
+    // latch synced once discord accepted the commands, even if kv daily writes are full
+    commandsCheckedAt = -1;
+    await env.FEED.put("commands_hash", hash).catch((e) => console.log(`couldn't store commands_hash: ${(e as Error).message}`));
+  } catch (e) {
+    console.log(`couldn't sync slash commands: ${(e as Error).message}`);
+  }
+}
 
 // wakes the bot's gateway connection if it ever stopped, so it's never offline for more than a cron run
 async function keepOnline(env: Env): Promise<void> {
@@ -100,24 +127,49 @@ function me(session: Session, env: Env) {
   return { name: session.name, avatar: session.avatar, member: session.member, invite: env.INVITE_URL };
 }
 
+// stateless hmac-signed oauth state so /callback only accepts sign-ins that started at a signed /login, with zero kv writes
+const LoginStateTtlSeconds = 600;
+const StatePattern = /^[A-Za-z0-9_-]{16,128}$/;
+
+async function signOAuthState(env: Env, state: string, time: number): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.STORE_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`oauth\n${time}\n${state}`));
+  const hex = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${state}.${time}.${hex}`;
+}
+
+async function verifyOAuthState(env: Env, raw: string): Promise<string | null> {
+  const parts = raw.split(".");
+  if (parts.length !== 3 || !env.STORE_KEY) return null;
+  const [state, timeStr, sigHex] = parts;
+  if (!StatePattern.test(state) || !/^\d+$/.test(timeStr) || !/^[0-9a-f]{64}$/i.test(sigHex)) return null;
+  if (Math.abs(Date.now() / 1000 - Number(timeStr)) > LoginStateTtlSeconds) return null;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.STORE_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const given = new Uint8Array(sigHex.match(/../g)!.map((pair) => parseInt(pair, 16)));
+  const ok = await crypto.subtle.verify("HMAC", key, given, new TextEncoder().encode(`oauth\n${timeStr}\n${state}`));
+  return ok ? state : null;
+}
+
 // the app's own state comes back with the session, so the app knows the sign-in it gets back is the one it started
-function login(url: URL, env: Env): Response {
+async function login(url: URL, env: Env): Promise<Response> {
   const state = url.searchParams.get("state") ?? "";
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(state)) return json({ error: "bad_state" }, 400);
+  if (!StatePattern.test(state)) return json({ error: "bad_state" }, 400);
+  const signedState = await signOAuthState(env, state, Math.floor(Date.now() / 1000));
   const authorize = new URL("https://discord.com/oauth2/authorize");
   authorize.search = new URLSearchParams({
     client_id: env.CLIENT_ID,
     response_type: "code",
     redirect_uri: `${url.origin}/callback`,
     scope: Scopes,
-    state,
+    state: signedState,
     prompt: "none",
   }).toString();
   return Response.redirect(authorize.toString(), 302);
 }
 
 async function callback(url: URL, env: Env): Promise<Response> {
-  const state = url.searchParams.get("state") ?? "";
+  const state = await verifyOAuthState(env, url.searchParams.get("state") ?? "");
+  if (!state) return unofficial();
   const code = url.searchParams.get("code");
   const back = new URL(env.APP_REDIRECT);
   back.searchParams.set("state", state);
@@ -206,7 +258,8 @@ async function download(postId: string, index: FeedIndex, session: Session, env:
   const zip = packed?.message ? { message: packed.message, attachment: packed.id } : module.zip;
   if (!zip) return json({ error: "not_a_zip" }, 404);
   const message = await bot<Message>(env, `/channels/${postId}/messages/${zip.message}`);
-  const attachment = message.attachments.find((a) => a.id === zip.attachment) ?? message.attachments.find((a) => a.filename.toLowerCase().endsWith(".zip"));
+  const files = attachmentsOf(message);
+  const attachment = files.find((a) => a.id === zip.attachment) ?? files.find((a) => a.filename.toLowerCase().endsWith(".zip"));
   if (!attachment) return json({ error: "gone" }, 410);
   const file = await fetch(attachment.url);
   if (!file.ok || !file.body) return json({ error: "gone" }, 502);

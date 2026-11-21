@@ -87,6 +87,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   if (auth.startsWith("Bot ")) {
     botCalls++;
+    if (init?.method === "PUT" && path === "/applications/client/guilds/g/commands") {
+      return ok([]);
+    }
     if (init?.method === "PUT" && path.startsWith("/guilds/g/members/")) {
       if (roleFails) return new Response('{"message": "Missing Permissions"}', { status: 403 });
       rolesGiven.push(path);
@@ -174,8 +177,10 @@ async function call(path: string, session?: string, method = "GET", signed = tru
 async function signIn(who: string): Promise<string> {
   const start = await call("/login?state=abcdefghijklmnop1234");
   assert.equal(start.status, 302);
-  assert.match(start.headers.get("Location") ?? "", /scope=identify\+guilds\.members\.read/);
-  const page = await (await call(`/callback?code=${who}&state=abcdefghijklmnop1234`)).text();
+  const location = start.headers.get("Location") ?? "";
+  assert.match(location, /scope=identify\+guilds\.members\.read/);
+  const oauthState = new URL(location).searchParams.get("state") ?? "";
+  const page = await (await call(`/callback?code=${who}&state=${encodeURIComponent(oauthState)}`)).text();
   const session = page.match(/session=([0-9a-f]{64})/)?.[1];
   assert.ok(session, "the page back to the app carries a session");
   assert.match(page, /state=abcdefghijklmnop1234/);
@@ -321,6 +326,31 @@ test("publishing fills the store page", async () => {
   assert.equal(served.status, 200);
   assert.equal(served.headers.get("Content-Type"), "image/png");
 
+  // /preview with addimage=true appends onto existing previews instead of replacing them, while addimage=false replaces
+  const addedPreview = await slash({
+    type: 2,
+    channel_id: "1001",
+    data: { name: "preview", options: [{ name: "message", value: "1004" }, { name: "addimage", value: true }] },
+    member: { user: { id: "maker" }, permissions: "0" },
+  });
+  assert.equal(addedPreview.answer, done("Added 1 preview to **Liquid Glass** (3 total)."));
+  assert.deepEqual((await listed())["1001"].previews, [
+    "https://feed.test/pictures/1001/pic2",
+    "https://feed.test/pictures/1001/pic3",
+    "https://feed.test/pictures/1001/pic1",
+  ]);
+  const replacedPreview = await slash({
+    type: 2,
+    channel_id: "1001",
+    data: { name: "preview", options: [{ name: "message", value: "1005" }, { name: "addimage", value: false }] },
+    member: { user: { id: "maker" }, permissions: "0" },
+  });
+  assert.equal(replacedPreview.answer, done("**Liquid Glass** has 2 new previews."));
+  assert.deepEqual((await listed())["1001"].previews, [
+    "https://feed.test/pictures/1001/pic2",
+    "https://feed.test/pictures/1001/pic3",
+  ]);
+
   // renaming the forum post renames the module at the next cron run
   hiddenThread.name = "[LOOKS] Renamed Thing";
   await worker.scheduled({}, env, ctx);
@@ -396,6 +426,11 @@ test("only official builds get in", async () => {
   };
   await turnedAway(await call("/modules", member, "GET", false));
   await turnedAway(await call("/login?state=abcdefghijklmnop1234", undefined, "GET", false));
+  // jumping straight to /callback without a signed /login, or replaying a used state, is turned away
+  await turnedAway(await call("/callback?code=member&state=forgedstate12345678", undefined, "GET", false));
+  await turnedAway(await call("/callback?code=member&state=abcdefghijklmnop1234", undefined, "GET", false));
+  // signing out also requires an official build signature
+  await turnedAway(await call("/signout", member, "POST", false));
   // a fork's own key, a signature for another path, and one from ten minutes ago are all turned away
   const forged = await sign("GET", "/modules", member, "a-fork-key");
   await turnedAway(await worker.fetch(new Request("https://feed.test/modules", { headers: { Authorization: `Bearer ${member}`, "X-Mochy-Time": forged.time, "X-Mochy-Sign": forged.signature } }), env, ctx));
@@ -404,9 +439,9 @@ test("only official builds get in", async () => {
   const stale = await sign("GET", "/modules", member, env.STORE_KEY, Math.floor(Date.now() / 1000) - 600);
   await turnedAway(await worker.fetch(new Request("https://feed.test/modules", { headers: { Authorization: `Bearer ${member}`, "X-Mochy-Time": stale.time, "X-Mochy-Sign": stale.signature } }), env, ctx));
   assert.equal((await call("/modules", member)).status, 200, "an official build still gets in");
-  // pictures and signing out need no signature
+  // pictures need no signature so coil can load store art directly; signed /signout still works
   assert.equal((await call("/pictures/1001/pic2", undefined, "GET", false)).status, 200);
-  assert.equal((await call("/signout", member, "POST", false)).status, 200);
+  assert.equal((await call("/signout", member, "POST", true)).status, 200);
 });
 
 test("a module pack holds several zips and links", async () => {
@@ -449,4 +484,97 @@ test("/help lists every command, only for whoever asked", async () => {
   for (const command of CommandList) assert.ok(help.includes(`\`/${command.name}\``), `/help mentions /${command.name}`);
   assert.ok(help.length < 2000, "fits in one discord message");
   for (const command of CommandList) assert.ok(command.description.length <= 100, `/${command.name}'s description fits discord`);
+});
+
+test("/publish with a separate module arg and /unpublish remove a post cleanly", async () => {
+  const member = await signIn("member");
+  const listed = async () => (await (await call("/modules", member)).json()) as { chart: string[]; modules: Array<Record<string, any>> };
+
+  // /publish accepts a forum post link (2 ids -> starter message) paired with a full message link for the zip
+  const postLinkPublish = await slash({
+    type: 2,
+    channel_id: "elsewhere",
+    data: {
+      name: "publish",
+      options: [
+        { name: "message", value: "https://discord.com/channels/916351383341522994/3001" },
+        { name: "module", value: "https://discord.com/channels/916351383341522994/3001/3004" },
+      ],
+    },
+    member: { user: { id: "maker2" }, permissions: "0" },
+  });
+  assert.equal(postLinkPublish.answer, done("Published **Renamed Thing** 2.2."));
+
+  // /publish [msg with description + picture] [msg with zip]
+  const splitZip = await slash({
+    type: 2,
+    channel_id: "3001",
+    data: { name: "publish", options: [{ name: "message", value: "3005" }, { name: "module", value: "3001" }] },
+    member: { user: { id: "maker2" }, permissions: "0" },
+  });
+  assert.equal(splitZip.answer, done("Published **Renamed Thing** 2.2."));
+  let store = await listed();
+  let mod = store.modules.find((m) => m.id === "3001");
+  assert.equal(mod?.install, "zip");
+  assert.equal(mod?.banner, "https://feed.test/pictures/3001/pic7");
+
+  // /publish [msg with picture] [direct github link]
+  const splitLink = await slash({
+    type: 2,
+    channel_id: "3001",
+    data: { name: "publish", options: [{ name: "message", value: "3005" }, { name: "module", value: "https://github.com/someone/other-module" }] },
+    member: { user: { id: "maker2" }, permissions: "0" },
+  });
+  assert.equal(splitLink.answer, done("Published **Renamed Thing**, added from its link."));
+  store = await listed();
+  mod = store.modules.find((m) => m.id === "3001");
+  assert.equal(mod?.install, "link");
+  assert.equal(mod?.link, "https://github.com/someone/other-module");
+
+  // discord cdn file links are refused because they expire
+  const cdnReject = await slash({
+    type: 2,
+    channel_id: "3001",
+    data: { name: "publish", options: [{ name: "message", value: "3005" }, { name: "module", value: "https://cdn.discordapp.com/attachments/1/2/mod.zip" }] },
+    member: { user: { id: "maker2" }, permissions: "0" },
+  });
+  assert.match(cdnReject.answer ?? "", /expire after a day/);
+
+  // put it on the chart, confirm outsiders can't unpublish, then unpublish it and check both store and chart
+  await slash({
+    type: 2,
+    channel_id: "elsewhere",
+    data: { name: "setchart", options: [{ name: "lvl", value: 1 }, { name: "post", value: "3001" }] },
+    member: { user: { id: "owner" }, permissions: String(1n << 3n), roles: [] },
+  });
+  assert.ok((await listed()).chart.includes("3001"));
+
+  const denied = await slash({
+    type: 2,
+    channel_id: "3001",
+    data: { name: "unpublish", options: [] },
+    member: { user: { id: "fan" }, permissions: "0" },
+  });
+  assert.match(denied.answer ?? "", /Only the person who made this post can remove it/);
+
+  const removed = await slash({
+    type: 2,
+    channel_id: "3001",
+    data: { name: "unpublish", options: [] },
+    member: { user: { id: "maker2" }, permissions: "0" },
+  });
+  assert.equal(removed.answer, done("Unpublished **Renamed Thing**. It's off the store now."));
+  store = await listed();
+  assert.equal(store.modules.find((m) => m.id === "3001"), undefined);
+  assert.ok(!store.chart.includes("3001"));
+  assert.equal(await env.FEED.get("listing:3001"), null);
+
+  // running /unpublish again reports it isn't published
+  const again = await slash({
+    type: 2,
+    channel_id: "elsewhere",
+    data: { name: "unpublish", options: [{ name: "post", value: "https://discord.com/channels/916351383341522994/3001" }] },
+    member: { user: { id: "mod" }, permissions: String(1n << 34n) },
+  });
+  assert.match(again.answer ?? "", /isn't in the store yet/);
 });

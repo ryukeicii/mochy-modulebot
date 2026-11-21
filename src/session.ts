@@ -3,9 +3,11 @@
 import { asUser, DiscordError, tokens, type Tokens } from "./discord.ts";
 import type { Env } from "./env.ts";
 
-// roles and membership are asked again this often, so a newly bought role or a kick shows up within minutes
-const RecheckMs = 10 * 60 * 1000;
+// roles and membership are asked again this often, so a newly bought role or a kick shows up while keeping kv writes well within the free tier
+const RecheckMs = 60 * 60 * 1000;
 const SessionTtlSeconds = 60 * 24 * 60 * 60;
+
+const askedAt = new Map<string, number>();
 
 export interface Session {
   userId: string;
@@ -61,13 +63,23 @@ export async function load(env: Env, request: Request): Promise<{ id: string; se
   if (!id || !/^[0-9a-f]{64}$/.test(id)) return null;
   const stored = (await env.FEED.get(await keyOf(id), "json")) as Session | null;
   if (!stored) return null;
+  // the stored time isn't bumped on every check (that would be a kv write), so this worker remembers when it last asked discord
+  const lastAsked = askedAt.get(id);
+  if (stored.member && lastAsked && Date.now() - lastAsked < RecheckMs) return { id, session: stored };
   const session = await recheck(env, stored, false);
+  if (session) askedAt.set(id, Date.now());
   if (!session) {
-    await forget(env, id);
+    await forget(env, id).catch(() => {});
     return null;
   }
-  if (session !== stored) await save(env, id, session);
+  // a full kv daily write quota shouldn't break /modules for people who are already signed in
+  if (changed(stored, session)) await save(env, id, session).catch((e) => console.log(`couldn't update session: ${(e as Error).message}`));
   return { id, session };
+}
+
+// only something that matters is worth a kv write; the checked time alone isn't, it just means we look again next hour
+function changed(before: Session, after: Session): boolean {
+  return before.member !== after.member || before.access !== after.access || before.roles.join() !== after.roles.join();
 }
 
 async function recheck(env: Env, session: Session, force: boolean): Promise<Session | null> {

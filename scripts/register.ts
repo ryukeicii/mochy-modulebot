@@ -1,7 +1,7 @@
 // puts the module commands into mochy's bar and points discord at the worker; run it once after deploying: BOT_TOKEN=... npm run register -- https://<worker address>
 
 import { readFileSync } from "node:fs";
-import { CommandList } from "../src/catalog.ts";
+import { commandPayloads } from "../src/catalog.ts";
 
 const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
 const setting = (name: string) => toml.match(new RegExp(`^${name}\\s*=\\s*"([^"]*)"`, "m"))?.[1] ?? "";
@@ -28,12 +28,7 @@ if (app.id !== setting("CLIENT_ID")) throw new Error(`this bot belongs to applic
 if (app.verify_key !== setting("PUBLIC_KEY")) throw new Error(`put PUBLIC_KEY = "${app.verify_key}" in wrangler.toml, deploy, then run this again`);
 
 // every module command points at a message, by its link or, inside the post, its id
-const commands = CommandList.map((c) => ({
-  type: 1,
-  name: c.name,
-  description: c.description,
-  ...(c.options ? { options: c.options } : c.takesMessage ? { options: [{ name: "message", type: 3, required: true, description: "The message's link, or its id when you're in the post" }] } : {}),
-}));
+const commands = commandPayloads();
 
 // a server's own command shows up straight away; a global one can take an hour
 await api(`/applications/${app.id}/guilds/${setting("GUILD_ID")}/commands`, "PUT", commands);

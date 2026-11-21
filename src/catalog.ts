@@ -16,9 +16,13 @@ export const CommandList: CommandInfo[] = [
   {
     name: "publish",
     group: "Publishing",
-    description: "Put your module in Mochy's store: a message with its .zip and a picture",
-    help: "puts your module in the store. Point it at a message with the .zip and a picture: the first picture becomes the banner, the message's words the description.",
+    description: "Put your module in Mochy's store from a message, with an optional zip message or link",
+    help: "puts your module in the store from a message with a picture and description, plus an optional zip message or module link.",
     takesMessage: true,
+    options: [
+      { name: "message", type: 3, required: true, description: "Message with description and banner picture (link or id)" },
+      { name: "module", type: 3, required: false, description: "Optional: message link/id with the .zip, or a module link (GitHub/URL)" },
+    ],
   },
   {
     name: "publishlink",
@@ -51,9 +55,13 @@ export const CommandList: CommandInfo[] = [
   {
     name: "preview",
     group: "Changing a published module",
-    description: "Set the preview pictures on a module's store page",
-    help: "uses a message's pictures (up to 8) as the store page's screenshots.",
+    description: "Set or add preview pictures on a module's store page",
+    help: "uses a message's pictures (up to 8) as screenshots; set addimage to true to append instead of replacing.",
     takesMessage: true,
+    options: [
+      { name: "message", type: 3, required: true, description: "The message's link, or its id when you're in the post" },
+      { name: "addimage", type: 5, required: false, description: "True to add images to existing previews instead of replacing them" },
+    ],
   },
   {
     name: "banner",
@@ -70,6 +78,16 @@ export const CommandList: CommandInfo[] = [
     takesMessage: true,
   },
   {
+    name: "unpublish",
+    group: "Changing a published module",
+    description: "Remove a published module from Mochy's store",
+    help: "removes a post from the store and chart. Run inside the post, or pass its link or id.",
+    takesMessage: false,
+    options: [
+      { name: "post", type: 3, required: false, description: "Optional: the post's link or id (leave empty inside the post)" },
+    ],
+  },
+  {
     name: "setchart",
     group: "The chart",
     description: "Put a module at a spot from 1 to 5 in Best from community (chart keepers and admins)",
@@ -84,6 +102,20 @@ export const CommandList: CommandInfo[] = [
   { name: "src", group: "Everything else", description: "Where this bot's code lives", help: "links this bot's code.", takesMessage: false },
   { name: "help", group: "Everything else", description: "What every command does", help: "shows this list.", takesMessage: false },
 ];
+
+// discord's slash command payloads, shared by register.ts and the worker's own auto-sync
+export function commandPayloads() {
+  return CommandList.map((c) => ({
+    type: 1,
+    name: c.name,
+    description: c.description,
+    ...(c.options
+      ? { options: c.options }
+      : c.takesMessage
+        ? { options: [{ name: "message", type: 3, required: true, description: "The message's link, or its id when you're in the post" }] }
+        : {}),
+  }));
+}
 
 // the commands under their groups, with how to point at a message and who may change a post
 export function helpText(): string {

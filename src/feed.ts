@@ -1,6 +1,6 @@
 // reads every module forum on a timer and keeps one index of the published modules in them, plus what's needed to tell who may see the paid ones
 
-import { archivedThreads, bot, looksHidden, type Message, type Thread } from "./discord.ts";
+import { archivedThreads, attachmentsOf, bot, looksHidden, type Message, type Thread } from "./discord.ts";
 import { forumsOf, type Env, type Forum } from "./env.ts";
 import { loadListing, type Listing } from "./listing.ts";
 import type { GuildFacts, Overwrite } from "./permissions.ts";
@@ -93,9 +93,12 @@ export async function buildIndex(env: Env): Promise<FeedIndex> {
     }
   }
   modules.sort(newestFirst);
+  const existing = await loadIndex(env);
   const index: FeedIndex = { updated: Date.now(), modules, categories: [...categories], guild, forums };
-  await env.FEED.put("index", JSON.stringify(index));
-  return index;
+  // skip the kv write when nothing changed since the last cron run, saving free-tier daily put quota
+  const same = existing && JSON.stringify({ ...existing, updated: 0 }) === JSON.stringify({ ...index, updated: 0 });
+  if (!same) await env.FEED.put("index", JSON.stringify(index));
+  return same ? existing : index;
 }
 
 // reads the zip on the message someone picked with a command and makes it the post's zip from now on; null when it isn't a module, and nothing changes
@@ -125,6 +128,18 @@ export async function refreshPost(env: Env, thread: Thread, read?: PostRead): Pr
   index.updated = Date.now();
   await env.FEED.put("index", JSON.stringify(index));
   return module;
+}
+
+// drops an unpublished post from the cached index right away, along with its cached icon and zip pick
+export async function removePost(env: Env, postId: string): Promise<void> {
+  await Promise.all([env.FEED.delete(`icon:${postId}`), env.FEED.delete(`pick:${postId}`)]);
+  const index = await loadIndex(env);
+  if (!index) return;
+  const next = index.modules.filter((m) => m.id !== postId);
+  if (next.length === index.modules.length) return;
+  index.modules = next;
+  index.updated = Date.now();
+  await env.FEED.put("index", JSON.stringify(index));
 }
 
 // tags and titles change without a new message, so they're always taken from the post as it is now
@@ -197,7 +212,7 @@ async function readPost(env: Env, thread: Thread): Promise<PostRead | null> {
 
 // downloads a message's zip and reads its manifest and icon
 async function readZip(env: Env, thread: Thread, zipMessage: Message, starter: Message | null): Promise<PostRead | null> {
-  const attachment = zipMessage.attachments.find(isZip);
+  const attachment = attachmentsOf(zipMessage).find(isZip);
   if (!attachment || attachment.size > MaxZipBytes) return null;
   const download = await fetch(attachment.url);
   if (!download.ok) throw new Error(`zip download said ${download.status}`);
@@ -226,6 +241,6 @@ function snowflakeNow(): string {
   return String(BigInt(Date.now() - 1420070400000) << 22n);
 }
 
-export function isZip(a: { filename: string }): boolean {
-  return a.filename.toLowerCase().endsWith(".zip");
+export function isZip(a: { filename: string; content_type?: string }): boolean {
+  return a.filename.toLowerCase().endsWith(".zip") || (a.content_type ?? "").toLowerCase().includes("zip");
 }

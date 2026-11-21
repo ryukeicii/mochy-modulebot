@@ -59,6 +59,10 @@ export async function saveListing(env: Env, postId: string, listing: Listing): P
   await env.FEED.put(`listing:${postId}`, JSON.stringify(listing));
 }
 
+export async function deleteListing(env: Env, postId: string): Promise<void> {
+  await env.FEED.delete(`listing:${postId}`);
+}
+
 export function isImage(a: Attachment): boolean {
   return (a.content_type ?? "").startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(a.filename);
 }

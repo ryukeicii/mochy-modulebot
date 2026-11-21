@@ -32,9 +32,12 @@ async function json<T>(response: Response): Promise<T> {
 
 export const bot = <T>(env: Env, path: string) => call(path, `Bot ${env.BOT_TOKEN}`).then((r) => json<T>(r));
 
-// changes something as the bot, like handing someone a role
-export async function botWrite(env: Env, method: string, path: string): Promise<void> {
-  const response = await call(path, `Bot ${env.BOT_TOKEN}`, { method });
+// changes something as the bot, like handing someone a role or syncing slash commands
+export async function botWrite(env: Env, method: string, path: string, body?: unknown): Promise<void> {
+  const init: RequestInit = body === undefined
+    ? { method }
+    : { method, body: JSON.stringify(body), headers: { "Content-Type": "application/json" } };
+  const response = await call(path, `Bot ${env.BOT_TOKEN}`, init);
   if (!response.ok) throw new DiscordError(response.status, await response.text());
 }
 
@@ -88,18 +91,56 @@ export interface Attachment {
   content_type?: string;
 }
 
+export interface Embed {
+  url?: string;
+  description?: string;
+}
+
+export interface MessageSnapshot {
+  message?: {
+    content?: string;
+    attachments?: Attachment[];
+    embeds?: Embed[];
+  };
+}
+
 export interface Message {
   id: string;
   content: string;
   author: { id: string; username: string; global_name?: string | null };
   attachments: Attachment[];
-  embeds?: unknown[];
+  embeds?: Embed[];
   sticker_items?: unknown[];
+  message_snapshots?: MessageSnapshot[];
+}
+
+// all attachments on a message, including forwarded message snapshots
+export function attachmentsOf(message: Message): Attachment[] {
+  const forwarded = (message.message_snapshots ?? []).flatMap((s) => s.message?.attachments ?? []);
+  return forwarded.length ? [...message.attachments, ...forwarded] : message.attachments;
+}
+
+// all text carried by a message, including forwarded snapshots and embed links/descriptions
+export function textOf(message: Message): string {
+  const parts: string[] = [];
+  if (message.content) parts.push(message.content);
+  for (const snap of message.message_snapshots ?? []) {
+    if (snap.message?.content) parts.push(snap.message.content);
+    for (const embed of snap.message?.embeds ?? []) {
+      if (embed.url) parts.push(embed.url);
+      if (embed.description) parts.push(embed.description);
+    }
+  }
+  for (const embed of message.embeds ?? []) {
+    if (embed.url) parts.push(embed.url);
+    if (embed.description) parts.push(embed.description);
+  }
+  return parts.join("\n");
 }
 
 // no message is ever truly empty, so one with nothing at all means discord is hiding it: message content intent is off
 export function looksHidden(message: Message): boolean {
-  return !message.content && !message.attachments.length && !message.embeds?.length && !message.sticker_items?.length;
+  return !message.content && !message.attachments.length && !message.embeds?.length && !message.sticker_items?.length && !message.message_snapshots?.length;
 }
 
 // a forum's archived posts, newest first; posts go quiet and archive themselves, so most modules end up here
