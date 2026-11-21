@@ -34,7 +34,7 @@ something's wrong, only you see why.
 | `/preview` | The message's pictures (up to 8) become the store page's previews. |
 | `/banner` | The message's first picture becomes the store page's banner. |
 | `/icon` | The message's first picture becomes the store icon, in place of the zip's own. |
-| `/setchart` | `lvl` 1 to 5 and a published post (its link or id, or `clear`): puts that module at that spot in the store's "Best from community". Only the ids in `CHART_KEEPERS` can use it. |
+| `/setchart` | `lvl` 1 to 5 and a published post (its link or id, or `clear`): puts that module at that spot in the store's "Best from community". Only members with a role in `CHART_ROLES`, the server's owner and its admins can use it. |
 | `/whatis` | Answers everyone with a link to the module guide. |
 | `/src` | Answers everyone with a link to this repo. |
 | `/help` | Lists every command and what it does, only for whoever asked. |

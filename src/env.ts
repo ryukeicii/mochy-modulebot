@@ -38,8 +38,8 @@ export interface Env {
   INVITE_URL: string;
   // the role someone gets for publishing a module
   PUBLISHER_ROLE: string;
-  // who may use /setchart: discord user ids, split by commas
-  CHART_KEEPERS: string;
+  // the roles whose members may use /setchart, split by commas; the owner and admins always may
+  CHART_ROLES: string;
   // where the app waits for the sign-in to come back
   APP_REDIRECT: string;
 }

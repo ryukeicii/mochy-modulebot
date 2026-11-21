@@ -138,7 +138,7 @@ const env: Env = {
   FORUMS: '[{"id": "free"}, {"id": "paid", "paid": true}]',
   INVITE_URL: "https://discord.gg/test",
   PUBLISHER_ROLE: "role-publisher",
-  CHART_KEEPERS: "keeper, other-keeper",
+  CHART_ROLES: "chart-role, other-chart-role",
   APP_REDIRECT: "mochy-modules://signed-in",
 };
 const pending: Promise<unknown>[] = [];
@@ -364,10 +364,12 @@ test("publishing by link or as a web page, and hidden messages", async () => {
 test("the chart keepers fill best from community", async () => {
   const member = await signIn("member");
   const setChart = (who: string, lvl: number, post: string) =>
-    slash({ type: 2, channel_id: "elsewhere", data: { name: "setchart", options: [{ name: "lvl", value: lvl }, { name: "post", value: post }] }, member: { user: { id: who }, permissions: String(1n << 3n) } });
+    slash({ type: 2, channel_id: "elsewhere", data: { name: "setchart", options: [{ name: "lvl", value: lvl }, { name: "post", value: post }] }, member: { user: { id: who }, permissions: who === "owner" ? String(1n << 3n) : "0", roles: who === "keeper" ? ["chart-role"] : who === "other-keeper" ? ["other-chart-role"] : [] } });
   const store = async () => (await (await call("/modules", member)).json()) as { chart: string[]; categories: string[] };
 
-  assert.match((await setChart("maker", 1, "1001")).answer ?? "", /Only the chart keepers/);
+  assert.match((await setChart("maker", 1, "1001")).answer ?? "", /Only the chart keepers and the server's admins/);
+  // the owner and admins have administrator, which is enough on its own
+  assert.equal((await setChart("owner", 4, "1001")).answer, done("**Liquid Glass** is #4 on the chart."));
   assert.equal((await setChart("keeper", 1, "https://discord.com/channels/916351383341522994/1001")).answer, done("**Liquid Glass** is #1 on the chart."));
   assert.equal((await setChart("other-keeper", 3, "3001")).answer, done("**Renamed Thing** is #3 on the chart."));
   assert.deepEqual((await store()).chart, ["1001", "3001"]);

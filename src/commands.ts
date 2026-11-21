@@ -9,6 +9,7 @@ import { dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, saveP
 
 // mods can change anyone's post: administrator, manage messages or manage threads
 const ModBits = (1n << 3n) | (1n << 13n) | (1n << 34n);
+const Administrator = 1n << 3n;
 const MaxDescription = 1500;
 
 const NotAModule = "That zip isn't a module I can read. It needs a manifest.json and has to be under 15 MB.";
@@ -21,7 +22,7 @@ export interface Interaction {
   token: string;
   channel_id?: string;
   data?: { name: string; options?: Array<{ name: string; value: string | number }> };
-  member?: { user: { id: string }; permissions: string };
+  member?: { user: { id: string }; permissions: string; roles?: string[] };
 }
 
 // done ones go out as a public message in the post; a note is extra for whoever ran it
@@ -184,10 +185,13 @@ async function onePicture({ thread, message }: Target, env: Env, part: "banner" 
   return { text: `New ${part} for **${nameOf(module, thread)}**.`, done: true };
 }
 
-// the chart keepers put a published post at one of the five spots of "best from community"
+// anyone with a chart role, the server's owner and its admins put a published post at one of the five spots of "best from community"
 async function setChart(event: Interaction, env: Env): Promise<Outcome> {
-  const keepers = env.CHART_KEEPERS.split(",").map((id) => id.trim());
-  if (!keepers.includes(event.member?.user.id ?? "")) return { text: "Only the chart keepers can change the chart." };
+  const chartRoles = env.CHART_ROLES.split(",").map((id) => id.trim());
+  const keeper = (event.member?.roles ?? []).some((role) => chartRoles.includes(role));
+  // discord hands the owner every permission in the command itself, administrator included
+  const admin = (BigInt(event.member?.permissions ?? "0") & Administrator) !== 0n;
+  if (!keeper && !admin) return { text: "Only the chart keepers and the server's admins can change the chart." };
   const spot = Number(option(event, "lvl"));
   if (!Number.isInteger(spot) || spot < 1 || spot > ChartSize) return { text: `Pick a spot from 1 to ${ChartSize}.` };
   const input = option(event, "post");

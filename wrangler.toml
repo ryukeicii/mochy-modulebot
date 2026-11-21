@@ -33,8 +33,8 @@ FORUMS = '[{"id": "1566642801482006599", "paid": false}]'
 INVITE_URL = "https://discord.gg/NTmqVphbRY"
 # the role someone gets for publishing a module; the bot needs Manage Roles and its own role above this one
 PUBLISHER_ROLE = "1573471059636654090"
-# who may change the "best from community" chart with /setchart
-CHART_KEEPERS = "916499311083266119,916496733456977962"
+# the roles whose members may change the "best from community" chart with /setchart; the owner and admins always may
+CHART_ROLES = "916499311083266119,916496733456977962"
 # where mochy waits for the sign-in to come back
 APP_REDIRECT = "mochy-modules://signed-in"
 

@@ -65,8 +65,8 @@ export const CommandList: CommandInfo[] = [
   {
     name: "setchart",
     group: "The chart",
-    description: "Put a module at a spot from 1 to 5 in Best from community (chart keepers only)",
-    help: "puts a module's post at a spot from 1 to 5 in Best from community, at the top of the store. Write clear instead of a post to empty a spot. Only the chart keepers can use it.",
+    description: "Put a module at a spot from 1 to 5 in Best from community (chart keepers and admins)",
+    help: "puts a module's post at a spot from 1 to 5 in Best from community, at the top of the store. Write clear instead of a post to empty a spot. Only the chart keepers and the server's admins can use it.",
     takesMessage: false,
     options: [
       { name: "lvl", type: 4, required: true, min_value: 1, max_value: 5, description: "The spot, from 1 at the top to 5" },
