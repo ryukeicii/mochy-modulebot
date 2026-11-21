@@ -6,6 +6,7 @@ import { buildIndex, loadIndex, type FeedIndex, type FeedModule } from "./feed.t
 import { interaction } from "./interactions.ts";
 import type { Picture } from "./listing.ts";
 import { loadChart } from "./chart.ts";
+import { signedByOfficialBuild } from "./official.ts";
 import { canView } from "./permissions.ts";
 import { forget, fromTokens, load, newSessionId, save, type Session } from "./session.ts";
 
@@ -19,7 +20,11 @@ export default {
     const url = new URL(request.url);
     try {
       if (request.method === "POST" && url.pathname === "/interactions") return await interaction(request, env, ctx);
-      if (request.method === "GET" && url.pathname === "/login") return login(url, env);
+      if (request.method === "GET" && url.pathname === "/login") {
+        const state = url.searchParams.get("state") ?? "";
+        if (!(await signedByOfficialBuild(env, url.searchParams.get("t"), url.searchParams.get("sig"), "GET", "/login", state))) return unofficial();
+        return login(url, env);
+      }
       if (request.method === "GET" && url.pathname === "/callback") return await callback(url, env);
       if (request.method === "GET" && url.pathname.startsWith("/icons/")) return await icon(url.pathname.slice(7), env);
       if (request.method === "GET" && url.pathname.startsWith("/pictures/")) return await picture(url.pathname.slice(10), env);
@@ -28,6 +33,9 @@ export default {
         if (signedIn) await forget(env, signedIn.id);
         return json({ ok: true });
       }
+      const bearer = request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
+      const signature = [request.headers.get("X-Mochy-Time"), request.headers.get("X-Mochy-Sign")] as const;
+      if (!(await signedByOfficialBuild(env, signature[0], signature[1], request.method, url.pathname, bearer))) return unofficial();
       if (!signedIn) return json({ error: "signed_out" }, 401);
       const { session } = signedIn;
       if (request.method === "GET" && url.pathname === "/me") return json(me(session, env));
@@ -66,6 +74,11 @@ async function keepOnline(env: Env): Promise<void> {
   } catch (e) {
     console.log(`couldn't wake the bot: ${(e as Error).message}`);
   }
+}
+
+// what a fork or a changed copy gets; the app shows its "you're using a fork" page for it
+function unofficial(): Response {
+  return json({ error: "unofficial_build" }, 403);
 }
 
 function json(body: unknown, status = 200): Response {

@@ -24,9 +24,11 @@ export interface Objects {
 export interface Env {
   FEED: KV;
   PRESENCE: Objects;
-  // secrets: wrangler secret put BOT_TOKEN, wrangler secret put CLIENT_SECRET
+  // secrets: wrangler secret put BOT_TOKEN, CLIENT_SECRET and STORE_KEY
   BOT_TOKEN: string;
   CLIENT_SECRET: string;
+  // the key official mochy builds sign with; without it set, every app request is turned away
+  STORE_KEY: string;
   CLIENT_ID: string;
   // the application's public key, which discord signs slash commands with (Developer Portal, General Information)
   PUBLIC_KEY: string;

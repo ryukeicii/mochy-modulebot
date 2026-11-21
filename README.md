@@ -66,6 +66,7 @@ answers that it can't see what's in messages, Message Content Intent is off in t
    npx wrangler kv namespace create FEED     # put the id it prints into wrangler.toml
    npx wrangler secret put BOT_TOKEN
    npx wrangler secret put CLIENT_SECRET
+   npx wrangler secret put STORE_KEY        # the same key as MODULE_STORE_KEY in Mochy's local.properties and GitHub secrets
    ```
    In `wrangler.toml` set `CLIENT_ID`, and list every module forum in `FORUMS`, for example
    `[{"id": "1566642801482006599", "paid": false}, {"id": "<paid forum id>", "paid": true}]`. Then `npx wrangler deploy`.
@@ -74,6 +75,18 @@ answers that it can't see what's in messages, Message Content Intent is off in t
    `CLIENT_ID` and `PUBLIC_KEY` against the bot, adds the commands to Mochy's Bar and sets the app's Interactions Endpoint URL
    to `https://<your worker>/interactions`.
 4. **Mochy.** Put the worker's address in `ModuleFeed.FeedUrl` (`modules/browser/ModuleFeed.kt`) and build.
+
+## Official builds only
+
+The store only answers official Mochy builds. They carry `MODULE_STORE_KEY`, which lives in Mochy's `local.properties` and
+its GitHub Actions secrets but never in its public code, and sign each request with it: an HMAC-SHA256 over the time, the
+method, the path and the session (`X-Mochy-Time`, `X-Mochy-Sign`), or over the state in the sign-in link (`t`, `sig`). The
+worker checks it against `STORE_KEY` and turns anything else away with `403 unofficial_build`, which the app shows as its
+"you're using a fork" page. A signature more than five minutes off is turned away too, so a copied request soon stops
+working. Pictures, icons, signing out and Discord's own calls need no signature.
+
+This stops forks built from the source. The key is inside every official APK, scrambled but there, so someone who digs it
+out could still get in; changing the key (all three places) and shipping a new build shuts them out again.
 
 ## Staying online
 
@@ -86,7 +99,7 @@ free plan's daily Durable Object time; going over only takes the green dot away 
 ## The api the app uses
 
 Every call but `/login`, `/callback`, `/icons/<post>`, `/pictures/...` and `/interactions` (Discord's, signed with the public key) takes
-`Authorization: Bearer <session>`.
+`Authorization: Bearer <session>` and the build's signature (see Official builds only); `/login` carries its signature in the link.
 
 | Call | What it does |
 |---|---|

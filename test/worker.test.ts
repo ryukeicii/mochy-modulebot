@@ -131,6 +131,7 @@ const env: Env = {
   PRESENCE: { idFromName: () => "bot", get: () => ({ fetch: async () => new Response("{}") }) },
   BOT_TOKEN: "bot",
   CLIENT_SECRET: "secret",
+  STORE_KEY: "test-store-key",
   CLIENT_ID: "client",
   PUBLIC_KEY: publicKey,
   GUILD_ID: "g",
@@ -142,8 +143,27 @@ const env: Env = {
 };
 const pending: Promise<unknown>[] = [];
 const ctx = { waitUntil: (p: Promise<unknown>) => void pending.push(p) };
-const call = (path: string, session?: string, method = "GET") =>
-  worker.fetch(new Request(`https://feed.test${path}`, { method, headers: session ? { Authorization: `Bearer ${session}` } : {} }), env, ctx);
+// signs the way an official build does: over the time, the method, the path and the session, or the sign-in's state
+async function sign(method: string, path: string, extra: string, key = env.STORE_KEY, time = Math.floor(Date.now() / 1000)) {
+  const hmac = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = Buffer.from(await crypto.subtle.sign("HMAC", hmac, new TextEncoder().encode(`${time}\n${method}\n${path}\n${extra}`))).toString("hex");
+  return { time: String(time), signature };
+}
+
+async function call(path: string, session?: string, method = "GET", signed = true): Promise<Response> {
+  const url = new URL(`https://feed.test${path}`);
+  const headers: Record<string, string> = session ? { Authorization: `Bearer ${session}` } : {};
+  if (signed && url.pathname === "/login") {
+    const { time, signature } = await sign("GET", "/login", url.searchParams.get("state") ?? "");
+    url.searchParams.set("t", time);
+    url.searchParams.set("sig", signature);
+  } else if (signed) {
+    const { time, signature } = await sign(method, url.pathname, session ?? "");
+    headers["X-Mochy-Time"] = time;
+    headers["X-Mochy-Sign"] = signature;
+  }
+  return worker.fetch(new Request(url, { method, headers }), env, ctx);
+}
 
 // signs in with a pretend discord code and digs the session out of the page that sends the browser back to the app
 async function signIn(who: string): Promise<string> {
@@ -357,6 +377,27 @@ test("the chart keepers fill best from community", async () => {
   assert.match((await setChart("keeper", 6, "1001")).answer ?? "", /from 1 to 5/);
   assert.match((await setChart("keeper", 1, "nonsense")).answer ?? "", /its link, or its id/);
   assert.deepEqual((await store()).categories, ["Looks"], "the forum tags are the store's categories");
+});
+
+test("only official builds get in", async () => {
+  const member = await signIn("member");
+  const turnedAway = async (response: Response) => {
+    assert.equal(response.status, 403);
+    assert.equal(((await response.json()) as { error: string }).error, "unofficial_build");
+  };
+  await turnedAway(await call("/modules", member, "GET", false));
+  await turnedAway(await call("/login?state=abcdefghijklmnop1234", undefined, "GET", false));
+  // a fork's own key, a signature for another path, and one from ten minutes ago are all turned away
+  const forged = await sign("GET", "/modules", member, "a-fork-key");
+  await turnedAway(await worker.fetch(new Request("https://feed.test/modules", { headers: { Authorization: `Bearer ${member}`, "X-Mochy-Time": forged.time, "X-Mochy-Sign": forged.signature } }), env, ctx));
+  const elsewhere = await sign("GET", "/me", member);
+  await turnedAway(await worker.fetch(new Request("https://feed.test/modules", { headers: { Authorization: `Bearer ${member}`, "X-Mochy-Time": elsewhere.time, "X-Mochy-Sign": elsewhere.signature } }), env, ctx));
+  const stale = await sign("GET", "/modules", member, env.STORE_KEY, Math.floor(Date.now() / 1000) - 600);
+  await turnedAway(await worker.fetch(new Request("https://feed.test/modules", { headers: { Authorization: `Bearer ${member}`, "X-Mochy-Time": stale.time, "X-Mochy-Sign": stale.signature } }), env, ctx));
+  assert.equal((await call("/modules", member)).status, 200, "an official build still gets in");
+  // pictures and signing out need no signature
+  assert.equal((await call("/pictures/1001/pic2", undefined, "GET", false)).status, 200);
+  assert.equal((await call("/signout", member, "POST", false)).status, 200);
 });
 
 // a command that answers straight away, with what it said and whether everyone sees it
