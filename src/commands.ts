@@ -128,6 +128,7 @@ async function publishLinked({ thread, message, userId }: Target, env: Env, inst
     previews: old?.previews ?? [],
     icon: old?.icon ?? null,
     publishedAt: old?.publishedAt ?? Date.now(),
+    updatedAt: Date.now(),
   };
   await changeListing(env, thread.id, old, listing);
   const module = await refreshPost(env, thread);

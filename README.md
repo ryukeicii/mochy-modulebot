@@ -105,7 +105,7 @@ Every call but `/login`, `/callback`, `/icons/<post>`, `/pictures/...` and `/int
 |---|---|
 | `GET /login?state=<app state>` | Off to Discord to sign in; comes back to `mochy-modules://signed-in?session=…&state=…` (or `error=…`) |
 | `GET /me` | `name`, `avatar`, `member`, `invite` |
-| `GET /modules` | `me` (as `/me`) and the published modules: `id` (the post), `name`, `moduleId`, `version`, `author`, `description`, `kind` (`look`, `player`, `source`, `other`), `tags`, `paid`, `locked`, `icon`, `banner`, `previews`, `postUrl`, `size`, `install` (`zip`, `link` or `web`) and `link`; `chart`, the post ids of "Best from community" in order; and `categories`, every forum tag in order, which the store shows as its chips. `403 not_member` with the invite when they're not in the server, `503 warming_up` before the first read |
+| `GET /modules` | `me` (as `/me`) and the published modules: `id` (the post), `name`, `moduleId`, `version`, `author`, `description`, `kind` (`look`, `player`, `source`, `other`), `tags`, `paid`, `locked`, `icon`, `banner`, `previews`, `postUrl`, `size`, `updated` (milliseconds: the zip's message, or the last link publish), `install` (`zip`, `link` or `web`) and `link`; `chart`, the post ids of "Best from community" in order; and `categories`, every forum tag in order, which the store shows as its chips. `403 not_member` with the invite when they're not in the server, `503 warming_up` before the first read |
 | `GET /modules/<post>/zip` | The module's zip; `403 locked` for a paid one they can't see, `404 not_a_zip` for a linked one |
 | `GET /icons/<post>` | The icon from the zip |
 | `GET /pictures/<post>/<id>` | A banner, preview or `/icon` picture, cached for good since a new picture gets a new id |

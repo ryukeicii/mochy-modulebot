@@ -76,6 +76,11 @@ async function keepOnline(env: Env): Promise<void> {
   }
 }
 
+// discord ids carry the time they were made, in milliseconds since the start of 2015
+function snowflakeTime(id: string): number {
+  return Number(BigInt(id) >> 22n) + 1420070400000;
+}
+
 // what a fork or a changed copy gets; the app shows its "you're using a fork" page for it
 function unofficial(): Response {
   return json({ error: "unofficial_build" }, 403);
@@ -164,6 +169,8 @@ function listFor(index: FeedIndex, session: Session, origin: string) {
       previews: m.listing.previews.map(picture),
       postUrl: m.postUrl,
       size: m.zip?.size ?? null,
+      // when it last changed, in milliseconds: the zip's message for a zip, the last publish for a link
+      updated: m.zip ? snowflakeTime(m.zip.message) : (m.listing.updatedAt ?? m.listing.publishedAt),
     }];
   });
 }

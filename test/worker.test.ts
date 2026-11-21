@@ -299,6 +299,7 @@ test("publishing fills the store page", async () => {
   assert.equal(store["3001"].name, "Unlisted Thing");
   assert.equal(store["3001"].description, "Fresh look.");
   assert.equal(store["3001"].banner, "https://feed.test/pictures/3001/pic9");
+  assert.equal(typeof store["3001"].updated, "number");
 
   // pictures for the liquid glass post: two previews, then the first of them as its banner, then a new icon
   assert.equal((await command("preview", "maker", "1005")).answer, done("**Liquid Glass** has 2 new previews."));
@@ -340,6 +341,7 @@ test("publishing by link or as a web page, and hidden messages", async () => {
   assert.equal(store["3001"].description, "Get it here and enjoy");
   assert.equal(store["3001"].author, "Maker Two");
   assert.equal(store["3001"].banner, "https://feed.test/pictures/3001/pic7");
+  assert.ok(Math.abs(store["3001"].updated - Date.now()) < 60_000, "a linked module was updated when it was published");
   assert.equal((await call("/modules/3001/zip", member)).status, 404, "a linked module has no zip to hand out");
   assert.match((await command("update", "maker2", "3004", "0", "3001")).answer ?? "", /published as a link/);
 

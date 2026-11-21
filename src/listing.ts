@@ -29,6 +29,8 @@ export interface Listing {
   // set with /icon, and wins over the icon in the zip
   icon: Picture | null;
   publishedAt: number;
+  // when a linked module's link was last published; a zip module goes by its zip's message instead
+  updatedAt?: number;
 }
 
 export async function loadListing(env: Env, postId: string): Promise<Listing | null> {
