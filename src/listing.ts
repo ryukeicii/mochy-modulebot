@@ -12,16 +12,34 @@ export interface Picture {
   type: string;
 }
 
-// how the store adds a module: the post's zip, a link mochy adds like a pasted one (github and the like), or a web page it opens
-export type Install = "zip" | "link" | "web";
+// how the store adds a module: the post's zip, a link mochy adds like a pasted one (github and the like), a web page it opens, or a pack of several
+export type Install = "zip" | "link" | "web" | "pack";
+
+// one module in a pack: a zip in the pack's message, or a link people add it from
+export interface PackItem {
+  kind: "zip" | "link";
+  // the zip's attachment id, or "link" and its place in the pack
+  id: string;
+  name: string;
+  moduleId: string | null;
+  version: string | null;
+  size: number | null;
+  // the zip's own icon, kept like the store's other pictures
+  icon: Picture | null;
+  link: string | null;
+  // the message holding the zip, so it can be handed out with a fresh discord link
+  message: string | null;
+}
 
 // a post shows in the store only once it has one of these, made by /publish, /publishlink or /publishweb
 export interface Listing {
   // missing on listings made before links could be published, which are all zips
   install?: Install;
   link?: string | null;
-  // who made a linked module, since there's no manifest to say
+  // who made a linked module or a pack, since there's no one manifest to say
   author?: string | null;
+  // the modules in a pack, in the order they were posted
+  pack?: PackItem[];
   publisher: string;
   description: string;
   banner: Picture | null;
@@ -61,4 +79,10 @@ export async function dropPictures(env: Env, postId: string, old: Array<Picture 
   for (const picture of old) {
     if (picture && !keep.has(picture.id)) await env.FEED.delete(`picture:${postId}:${picture.id}`);
   }
+}
+
+// every picture a store page holds, its pack's icons included, so a change can clear out the ones it replaced
+export function picturesOf(listing: Listing | null): Array<Picture | null> {
+  if (!listing) return [];
+  return [listing.banner, listing.icon, ...listing.previews, ...(listing.pack ?? []).map((item) => item.icon)];
 }

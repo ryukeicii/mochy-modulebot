@@ -142,8 +142,9 @@ function toModule(env: Env, forum: Forum, tagNames: Map<string, string>, thread:
   };
 }
 
+// a post with no zip of its own to read: a link, a web page, or a pack, whose zips are read when it's published
 function isLinked(listing: Listing): boolean {
-  return listing.install === "link" || listing.install === "web";
+  return listing.install === "link" || listing.install === "web" || listing.install === "pack";
 }
 
 // a module published as a link has no zip to read, so the store shows what the post and its listing say

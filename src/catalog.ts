@@ -35,6 +35,13 @@ export const CommandList: CommandInfo[] = [
     takesMessage: true,
   },
   {
+    name: "modulepack",
+    group: "Publishing",
+    description: "Publish a pack of modules: a message with their zips or links and a picture",
+    help: "the same, for a pack: a message with several .zip files and links (GitHub and the like), and a picture. People add each one on its own from the pack's page.",
+    takesMessage: true,
+  },
+  {
     name: "update",
     group: "Changing a published module",
     description: "Update a module from a message with its new zip",

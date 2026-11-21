@@ -30,6 +30,7 @@ something's wrong, only you see why.
 | `/publish` | Puts the post in the store. The message needs the `.zip` and at least one picture: the first picture becomes the banner and the message's words the description. The author gets the publisher role. |
 | `/publishlink` | For a module people add by link (a GitHub project or a module's address): the message needs the link and a picture. The store's ADD adds it from that link, so its updates come from there too. |
 | `/publishweb` | For a module that lives on a web page: the message needs the page's link and a picture, and the store's button opens it. |
+| `/modulepack` | For several modules in one post: the message needs at least two `.zip` files or links (or both, up to 10) and a picture. Each zip is read for its name, version and icon; a link takes its name from `[Name](link)` or the GitHub project. People add each one on its own from the pack's page. Run it again to change what's in the pack. |
 | `/update` | Makes that message's zip the module now. A picture next to it becomes the new banner. Without it, the newest zip from the author takes over within 10 minutes; a picked zip stays until the author posts a newer one. |
 | `/preview` | The message's pictures (up to 8) become the store page's previews. |
 | `/banner` | The message's first picture becomes the store page's banner. |
@@ -105,8 +106,8 @@ Every call but `/login`, `/callback`, `/icons/<post>`, `/pictures/...` and `/int
 |---|---|
 | `GET /login?state=<app state>` | Off to Discord to sign in; comes back to `mochy-modules://signed-in?session=…&state=…` (or `error=…`) |
 | `GET /me` | `name`, `avatar`, `member`, `invite` |
-| `GET /modules` | `me` (as `/me`) and the published modules: `id` (the post), `name`, `moduleId`, `version`, `author`, `description`, `kind` (`look`, `player`, `source`, `other`), `tags`, `paid`, `locked`, `icon`, `banner`, `previews`, `postUrl`, `size`, `updated` (milliseconds: the zip's message, or the last link publish), `install` (`zip`, `link` or `web`) and `link`; `chart`, the post ids of "Best from community" in order; and `categories`, every forum tag in order, which the store shows as its chips. `403 not_member` with the invite when they're not in the server, `503 warming_up` before the first read |
-| `GET /modules/<post>/zip` | The module's zip; `403 locked` for a paid one they can't see, `404 not_a_zip` for a linked one |
+| `GET /modules` | `me` (as `/me`) and the published modules: `id` (the post), `name`, `moduleId`, `version`, `author`, `description`, `kind` (`look`, `player`, `source`, `other`), `tags`, `paid`, `locked`, `icon`, `banner`, `previews`, `postUrl`, `size` (a pack's zips together), `updated` (milliseconds: the zip's message, or the last link publish), `install` (`zip`, `link`, `web` or `pack`), `link` and `pack` (a pack's modules: `id`, `kind`, `name`, `moduleId`, `version`, `size`, `icon`, `link`); `chart`, the post ids of "Best from community" in order; and `categories`, every forum tag in order, which the store shows as its chips. `403 not_member` with the invite when they're not in the server, `503 warming_up` before the first read |
+| `GET /modules/<post>/zip` | The module's zip, or with `?item=<id>` one of a pack's; `403 locked` for a paid one they can't see, `404 not_a_zip` for a linked one or a pack without `item` |
 | `GET /icons/<post>` | The icon from the zip |
 | `GET /pictures/<post>/<id>` | A banner, preview or `/icon` picture, cached for good since a new picture gets a new id |
 | `POST /signout` | Forgets the session |

@@ -53,7 +53,7 @@ export default {
         return json({ updated: index.updated, me: me(session, env), chart, categories: index.categories ?? [], modules });
       }
       const zip = url.pathname.match(/^\/modules\/(\d+)\/zip$/);
-      if (request.method === "GET" && zip) return await download(zip[1], index, session, env);
+      if (request.method === "GET" && zip) return await download(zip[1], index, session, env, url.searchParams.get("item"));
       return json({ error: "not_found" }, 404);
     } catch (e) {
       console.log(`${url.pathname} failed: ${(e as Error).stack ?? e}`);
@@ -74,6 +74,12 @@ async function keepOnline(env: Env): Promise<void> {
   } catch (e) {
     console.log(`couldn't wake the bot: ${(e as Error).message}`);
   }
+}
+
+// a pack's size is all its zips together, null when it's only links
+function packSize(m: FeedModule): number | null {
+  const sizes = (m.listing.pack ?? []).map((item) => item.size).filter((size): size is number => size != null);
+  return sizes.length ? sizes.reduce((a, b) => a + b, 0) : null;
 }
 
 // discord ids carry the time they were made, in milliseconds since the start of 2015
@@ -168,7 +174,18 @@ function listFor(index: FeedIndex, session: Session, origin: string) {
       banner: m.listing.banner ? picture(m.listing.banner) : null,
       previews: m.listing.previews.map(picture),
       postUrl: m.postUrl,
-      size: m.zip?.size ?? null,
+      size: m.zip?.size ?? packSize(m),
+      // a pack's modules, each added on its own; a zip comes from /modules/<post>/zip?item=<its id>
+      pack: (m.listing.pack ?? []).map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        name: item.name,
+        moduleId: item.moduleId,
+        version: item.version,
+        size: item.size,
+        icon: item.icon ? picture(item.icon) : null,
+        link: item.link,
+      })),
       // when it last changed, in milliseconds: the zip's message for a zip, the last publish for a link
       updated: m.zip ? snowflakeTime(m.zip.message) : (m.listing.updatedAt ?? m.listing.publishedAt),
     }];
@@ -176,14 +193,17 @@ function listFor(index: FeedIndex, session: Session, origin: string) {
 }
 
 // the zip comes through here: discord's own file links run out after a day, so a fresh one is asked for every time
-async function download(postId: string, index: FeedIndex, session: Session, env: Env): Promise<Response> {
+async function download(postId: string, index: FeedIndex, session: Session, env: Env, item: string | null): Promise<Response> {
   const module = index.modules.find((m) => m.id === postId);
   if (!module) return json({ error: "not_found" }, 404);
   const locked = lockedFor(module, index, session);
   if (locked === null) return json({ error: "not_found" }, 404);
   if (locked) return json({ error: "locked" }, 403);
   // a linked module is added from its link, so there's no zip to hand over
-  const zip = module.zip;
+  // a pack's zip is one of its items; anything else has one zip of its own, or none for a link
+  const packed = item ? module.listing.pack?.find((p) => p.kind === "zip" && p.id === item) : null;
+  if (item && !packed) return json({ error: "not_found" }, 404);
+  const zip = packed?.message ? { message: packed.message, attachment: packed.id } : module.zip;
   if (!zip) return json({ error: "not_a_zip" }, 404);
   const message = await bot<Message>(env, `/channels/${postId}/messages/${zip.message}`);
   const attachment = message.attachments.find((a) => a.id === zip.attachment) ?? message.attachments.find((a) => a.filename.toLowerCase().endsWith(".zip"));

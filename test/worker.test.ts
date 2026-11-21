@@ -55,6 +55,9 @@ const hidden = { id: "1006", content: "", author: { id: "maker", username: "make
 const githubLink = { id: "3005", content: "Get it here https://github.com/someone/glass-module and enjoy", author: { id: "maker2", username: "maker2", global_name: "Maker Two" }, attachments: [picture("pic7")] };
 const webPage = { id: "3006", content: "Try it on <https://example.com/glass>.", author: { id: "maker2", username: "maker2" }, attachments: [picture("pic8")] };
 let hideEverything = false;
+// a pack: two zips, a named link and a bare one, and its banner; and a message with only one module
+const packMessage = { id: "3007", content: "Two looks and more: [Neon Player](https://github.com/someone/neon) and https://example.com/x", author: { id: "maker2", username: "maker2" }, attachments: [picture("pic11"), zipFile("z1"), zipFile("z2")] };
+const lonelyPack = { id: "3008", content: "just one", author: { id: "maker2", username: "maker2" }, attachments: [picture("pic12"), zipFile("z3")] };
 const rolesGiven: string[] = [];
 let roleFails = false;
 
@@ -110,6 +113,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       "/channels/3001/messages/3004": hiddenPublish,
       "/channels/3001/messages/3005": githubLink,
       "/channels/3001/messages/3006": webPage,
+      "/channels/3001/messages/3007": packMessage,
+      "/channels/3001/messages/3008": lonelyPack,
       "/channels/1001/messages/1006": hidden,
       "/channels/2001/messages/2001": post("2001")[0],
     };
@@ -402,6 +407,25 @@ test("only official builds get in", async () => {
   // pictures and signing out need no signature
   assert.equal((await call("/pictures/1001/pic2", undefined, "GET", false)).status, 200);
   assert.equal((await call("/signout", member, "POST", false)).status, 200);
+});
+
+test("a module pack holds several zips and links", async () => {
+  const member = await signIn("member");
+  const listed = async () => Object.fromEntries(((await (await call("/modules", member)).json()) as { modules: Array<Record<string, any>> }).modules.map((m) => [m.id, m]));
+  assert.match((await command("modulepack", "maker2", "3008", "0", "3001")).answer ?? "", /at least two modules/);
+  assert.equal((await command("modulepack", "maker2", "3007", "0", "3001")).answer, done("Published **Renamed Thing**, a pack of 4 modules."));
+  const pack = (await listed())["3001"];
+  assert.equal(pack.install, "pack");
+  assert.equal(pack.description, "Two looks and more: and");
+  assert.equal(pack.size, zipBytes.length * 2);
+  assert.deepEqual(pack.pack.map((item: { kind: string; name: string }) => [item.kind, item.name]), [["zip", "Liquid Glass"], ["zip", "Liquid Glass"], ["link", "Neon Player"], ["link", "example.com"]]);
+  assert.equal(pack.pack[0].icon, "https://feed.test/pictures/3001/iz1");
+  assert.equal(pack.pack[2].link, "https://github.com/someone/neon");
+  // each zip comes down on its own, and a pack has none of its own
+  assert.equal((await call("/modules/3001/zip?item=z2", member)).status, 200);
+  assert.equal((await call("/modules/3001/zip?item=nope", member)).status, 404);
+  assert.equal((await call("/modules/3001/zip", member)).status, 404);
+  assert.match((await command("update", "maker2", "3004", "0", "3001")).answer ?? "", /This one is a pack/);
 });
 
 // a command that answers straight away, with what it said and whether everyone sees it

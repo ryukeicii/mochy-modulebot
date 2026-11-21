@@ -1,16 +1,20 @@
-// the module commands: /publish, /publishlink and /publishweb put a post in the store, /update swaps its zip, and /preview, /banner and /icon set its store page's pictures
+// the module commands: /publish, /publishlink, /publishweb and /modulepack put a post in the store, /update swaps its zip, and /preview, /banner and /icon set its store page's pictures
 
 import { bot, botWrite, looksHidden, type Attachment, type Message, type Thread } from "./discord.ts";
 import { forumsOf, type Env } from "./env.ts";
 import { isZip, pickZip, refreshPost, type FeedModule } from "./feed.ts";
 import { cleanTitle } from "./posts.ts";
 import { ChartSize, loadChart, saveChart } from "./chart.ts";
-import { dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, savePicture, saveListing, type Install, type Listing } from "./listing.ts";
+import { dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, picturesOf, savePicture, saveListing, type Install, type Listing, type PackItem } from "./listing.ts";
+import { readModuleZip } from "./zip.ts";
 
 // mods can change anyone's post: administrator, manage messages or manage threads
 const ModBits = (1n << 3n) | (1n << 13n) | (1n << 34n);
 const Administrator = 1n << 3n;
 const MaxDescription = 1500;
+// a pack reads every zip in one go, so it stays small enough to finish well inside a worker's limits
+const MaxPackItems = 10;
+const MaxZipBytes = 15 * 1024 * 1024;
 
 const NotAModule = "That zip isn't a module I can read. It needs a manifest.json and has to be under 15 MB.";
 const NotPublished = "This post isn't in the store yet. Run /publish on it first.";
@@ -44,6 +48,7 @@ export const Commands: Record<string, (event: Interaction, env: Env) => Promise<
   publish: (event, env) => withTarget(event, env, publish),
   publishlink: (event, env) => withTarget(event, env, (target) => publishLinked(target, env, "link")),
   publishweb: (event, env) => withTarget(event, env, (target) => publishLinked(target, env, "web")),
+  modulepack: (event, env) => withTarget(event, env, modulePack),
   update: (event, env) => withTarget(event, env, update),
   preview: (event, env) => withTarget(event, env, preview),
   banner: (event, env) => withTarget(event, env, (target) => onePicture(target, env, "banner")),
@@ -148,6 +153,7 @@ async function update({ thread, message }: Target, env: Env): Promise<Outcome> {
   if (old.install === "link" || old.install === "web") {
     return { text: "This one is published as a link, so there's no zip to swap. Run /publishlink or /publishweb again to change its link, or /publish to switch it to a zip." };
   }
+  if (old.install === "pack") return { text: "This one is a pack. Run /modulepack again with its new zips and links." };
   if (!message.attachments.some(isZip)) return { text: "I couldn't find a .zip on that message." };
   const picture = message.attachments.find(isImage);
   if (picture && tooBig(picture)) return { text: tooBigText(picture) };
@@ -217,7 +223,97 @@ async function setChart(event: Interaction, env: Env): Promise<Outcome> {
 // saves the store page and clears out the pictures the change replaced
 async function changeListing(env: Env, postId: string, old: Listing | null, listing: Listing): Promise<void> {
   await saveListing(env, postId, listing);
-  if (old) await dropPictures(env, postId, [old.banner, old.icon, ...old.previews], [listing.banner, listing.icon, ...listing.previews]);
+  if (old) await dropPictures(env, postId, picturesOf(old), picturesOf(listing));
+}
+
+// several modules in one post: every zip and link in the message, and a picture for the banner; each is added on its own from the pack's page
+async function modulePack({ thread, message, userId }: Target, env: Env): Promise<Outcome> {
+  const zips = message.attachments.filter(isZip).slice(0, MaxPackItems);
+  const links = linksIn(message.content).slice(0, MaxPackItems - zips.length);
+  const pictures = message.attachments.filter(isImage);
+  if (zips.length + links.length < 2 || !pictures.length) {
+    return { text: "A pack needs a message with at least two modules, as .zip files or links (GitHub and the like), and a picture for its banner." };
+  }
+  if (tooBig(pictures[0])) return { text: tooBigText(pictures[0]) };
+  const big = zips.find((zip) => zip.size > MaxZipBytes);
+  if (big) return { text: `${big.filename} is over 15 MB, too big for the store.` };
+  const items: PackItem[] = [];
+  for (const zip of zips) {
+    const item = await packZip(env, thread.id, message.id, zip);
+    if (!item) return { text: `${zip.filename} isn't a module I can read. Every zip in a pack needs its own manifest.json.` };
+    items.push(item);
+  }
+  links.forEach((link, index) => {
+    items.push({ kind: "link", id: `link${index}`, name: link.label ?? nameOfLink(link.url), moduleId: null, version: null, size: null, icon: null, link: link.url, message: null });
+  });
+  const old = await loadListing(env, thread.id);
+  const words = links.reduce((text, link) => text.replace(link.written, ""), message.content).replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  const listing: Listing = {
+    install: "pack",
+    link: null,
+    pack: items,
+    author: message.author.global_name ?? message.author.username,
+    publisher: userId,
+    description: words.slice(0, MaxDescription) || old?.description || "",
+    banner: await savePicture(env, thread.id, pictures[0]),
+    previews: old?.previews ?? [],
+    icon: old?.icon ?? null,
+    publishedAt: old?.publishedAt ?? Date.now(),
+    updatedAt: Date.now(),
+  };
+  await changeListing(env, thread.id, old, listing);
+  const module = await refreshPost(env, thread);
+  return { text: `Published **${nameOf(module, thread)}**, a pack of ${items.length} modules.`, done: true, note: await giveRole(env, thread.owner_id) };
+}
+
+// reads one of a pack's zips for its name, id, version and icon; null when it isn't a module
+async function packZip(env: Env, postId: string, messageId: string, zip: Attachment): Promise<PackItem | null> {
+  const download = await fetch(zip.url);
+  if (!download.ok) throw new Error(`zip download said ${download.status}`);
+  const read = await readModuleZip(new Uint8Array(await download.arrayBuffer()));
+  if (!read) return null;
+  const m = read.manifest;
+  const text = (value: unknown, max: number) => (typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null);
+  let icon = null;
+  if (read.icon) {
+    icon = { id: `i${zip.id}`, type: read.icon.type };
+    await env.FEED.put(`picture:${postId}:${icon.id}`, read.icon.bytes, { metadata: { type: icon.type } });
+  }
+  return {
+    kind: "zip",
+    id: zip.id,
+    name: text(m.name, 80) ?? zip.filename.replace(/\.zip$/i, ""),
+    moduleId: text(m.id, 120),
+    version: text(m.version, 40),
+    size: zip.size,
+    icon,
+    link: null,
+    message: messageId,
+  };
+}
+
+// every link in a message, with its name when it's written as [Name](link); [written] is how it appeared, to take it out of the description
+function linksIn(content: string): Array<{ url: string; label: string | null; written: string }> {
+  const found: Array<{ url: string; label: string | null; written: string }> = [];
+  const seen = new Set<string>();
+  for (const match of content.matchAll(/\[([^\]]+)\]\(<?(https:\/\/[^)\s>]+)>?\)/g)) {
+    if (!seen.has(match[2])) found.push({ url: match[2], label: match[1].trim(), written: match[0] });
+    seen.add(match[2]);
+  }
+  const rest = found.reduce((text, link) => text.replace(link.written, ""), content);
+  for (const match of rest.matchAll(/<?(https:\/\/[^\s<>()*`|]+)>?/g)) {
+    const url = match[1].replace(/[.,!?;:]+$/, "");
+    if (!seen.has(url)) found.push({ url, label: null, written: match[0] });
+    seen.add(url);
+  }
+  return found;
+}
+
+// a link's name when it wasn't given one: a github project's own name, or the site's
+function nameOfLink(url: string): string {
+  const parts = new URL(url).pathname.split("/").filter(Boolean);
+  const host = new URL(url).hostname.replace(/^www\./, "");
+  return host === "github.com" && parts.length >= 2 ? parts[1] : host;
 }
 
 // publishing earns the post's maker a role; a missing permission only costs the role, never the publish
