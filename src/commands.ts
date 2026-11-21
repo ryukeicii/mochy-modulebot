@@ -4,6 +4,7 @@ import { bot, botWrite, looksHidden, type Attachment, type Message, type Thread 
 import { forumsOf, type Env } from "./env.ts";
 import { isZip, pickZip, refreshPost, type FeedModule } from "./feed.ts";
 import { cleanTitle } from "./posts.ts";
+import { ChartSize, loadChart, saveChart } from "./chart.ts";
 import { dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, savePicture, saveListing, type Install, type Listing } from "./listing.ts";
 
 // mods can change anyone's post: administrator, manage messages or manage threads
@@ -19,7 +20,7 @@ export interface Interaction {
   application_id: string;
   token: string;
   channel_id?: string;
-  data?: { name: string; options?: Array<{ name: string; value: string }> };
+  data?: { name: string; options?: Array<{ name: string; value: string | number }> };
   member?: { user: { id: string }; permissions: string };
 }
 
@@ -46,7 +47,12 @@ export const Commands: Record<string, (event: Interaction, env: Env) => Promise<
   preview: (event, env) => withTarget(event, env, preview),
   banner: (event, env) => withTarget(event, env, (target) => onePicture(target, env, "banner")),
   icon: (event, env) => withTarget(event, env, (target) => onePicture(target, env, "icon")),
+  setchart: setChart,
 };
+
+function option(event: Interaction, name: string): string {
+  return String(event.data?.options?.find((o) => o.name === name)?.value ?? "").trim();
+}
 
 async function withTarget(event: Interaction, env: Env, run: Run): Promise<Outcome> {
   const target = await findTarget(event, env);
@@ -56,7 +62,7 @@ async function withTarget(event: Interaction, env: Env, run: Run): Promise<Outco
 // the message a command points at, once it's known to be in a module post the person may change
 async function findTarget(event: Interaction, env: Env): Promise<Target | string> {
   const userId = event.member?.user.id;
-  const where = messageFrom(event.data?.options?.find((o) => o.name === "message")?.value ?? "", event.channel_id);
+  const where = messageFrom(option(event, "message"), event.channel_id);
   if (!userId || !where) return "Give me the message: copy its link, or its id when you're in the post.";
   const thread = await bot<Thread>(env, `/channels/${where.channel}`).catch(() => null);
   if (!thread || !forumsOf(env).some((f) => f.id === thread.parent_id)) return "That message isn't in a module post.";
@@ -175,6 +181,32 @@ async function onePicture({ thread, message }: Target, env: Env, part: "banner" 
   await changeListing(env, thread.id, old, { ...old, [part]: await savePicture(env, thread.id, picture) });
   const module = await refreshPost(env, thread);
   return { text: `New ${part} for **${nameOf(module, thread)}**.`, done: true };
+}
+
+// the chart keepers put a published post at one of the five spots of "best from community"
+async function setChart(event: Interaction, env: Env): Promise<Outcome> {
+  const keepers = env.CHART_KEEPERS.split(",").map((id) => id.trim());
+  if (!keepers.includes(event.member?.user.id ?? "")) return { text: "Only the chart keepers can change the chart." };
+  const spot = Number(option(event, "lvl"));
+  if (!Number.isInteger(spot) || spot < 1 || spot > ChartSize) return { text: `Pick a spot from 1 to ${ChartSize}.` };
+  const input = option(event, "post");
+  const chart = await loadChart(env);
+  if (/^(clear|none|-)$/i.test(input)) {
+    chart[spot - 1] = null;
+    await saveChart(env, chart);
+    return { text: `Spot ${spot} on the chart is empty now.`, done: true };
+  }
+  // a post link is .../channels/<server>/<post>, sometimes with a message after it; a bare id is the post itself
+  const postId = input.match(/discord(?:app)?\.com\/channels\/\d+\/(\d+)/)?.[1] ?? (/^\d+$/.test(input) ? input : null);
+  if (!postId) return { text: "Give me the module's post: its link, or its id." };
+  const thread = await bot<Thread>(env, `/channels/${postId}`).catch(() => null);
+  if (!thread || !forumsOf(env).some((f) => f.id === thread.parent_id)) return { text: "That isn't a module post." };
+  if (!(await loadListing(env, thread.id))) return { text: "That post isn't in the store yet, so it can't go on the chart." };
+  // a module sits on the chart once, so putting it somewhere new clears its old spot
+  const next = chart.map((id) => (id === thread.id ? null : id));
+  next[spot - 1] = thread.id;
+  await saveChart(env, next);
+  return { text: `**${cleanTitle(thread.name)}** is #${spot} on the chart.`, done: true };
 }
 
 // saves the store page and clears out the pictures the change replaced

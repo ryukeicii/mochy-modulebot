@@ -8,6 +8,8 @@ export interface CommandInfo {
   help: string;
   // points at a message by its link, or its id inside the post
   takesMessage: boolean;
+  // discord's options, for a command that takes something other than a message
+  options?: unknown[];
 }
 
 export const CommandList: CommandInfo[] = [
@@ -60,6 +62,17 @@ export const CommandList: CommandInfo[] = [
     help: "uses a message's first picture as the store icon, in place of the zip's own.",
     takesMessage: true,
   },
+  {
+    name: "setchart",
+    group: "The chart",
+    description: "Put a module at a spot from 1 to 5 in Best from community (chart keepers only)",
+    help: "puts a module's post at a spot from 1 to 5 in Best from community, at the top of the store. Write clear instead of a post to empty a spot. Only the chart keepers can use it.",
+    takesMessage: false,
+    options: [
+      { name: "lvl", type: 4, required: true, min_value: 1, max_value: 5, description: "The spot, from 1 at the top to 5" },
+      { name: "post", type: 3, required: true, description: "The module's post: its link or id, or clear to empty the spot" },
+    ],
+  },
   { name: "whatis", group: "Everything else", description: "What Mochy modules are, and how to make one", help: "links the module guide.", takesMessage: false },
   { name: "src", group: "Everything else", description: "Where this bot's code lives", help: "links this bot's code.", takesMessage: false },
   { name: "help", group: "Everything else", description: "What every command does", help: "shows this list.", takesMessage: false },
@@ -73,7 +86,7 @@ export function helpText(): string {
     return [`**${group}**`, ...lines].join("\n");
   });
   return [
-    "**Mochy's module bot**",
+    "**Hep me Mochy**",
     "Every module command takes a message: paste its link (from the message's menu), or just its id when you're inside the post.",
     ...sections,
     "Only the post's author and mods can change a post, and the module's name in the store is the post's title.",

@@ -41,6 +41,8 @@ export interface FeedModule extends PostRead {
 export interface FeedIndex {
   updated: number;
   modules: FeedModule[];
+  // every forum's tags in the forum's own order, which the store shows as its categories
+  categories: string[];
   guild: GuildFacts;
   forums: Record<string, { paid: boolean; overwrites: Overwrite[] }>;
 }
@@ -60,11 +62,13 @@ export async function buildIndex(env: Env): Promise<FeedIndex> {
   const guild: GuildFacts = { id: info.id, ownerId: info.owner_id, roles: info.roles.map((r) => ({ id: r.id, permissions: r.permissions })) };
   const active = await bot<{ threads: Thread[] }>(env, `/guilds/${env.GUILD_ID}/threads/active`);
   const modules: FeedModule[] = [];
+  const categories = new Set<string>();
   const forums: FeedIndex["forums"] = {};
   for (const forum of forumsOf(env)) {
     const channel = await bot<Channel>(env, `/channels/${forum.id}`);
     forums[forum.id] = { paid: forum.paid, overwrites: channel.permission_overwrites ?? [] };
     const tagNames = tagsOf(channel);
+    for (const name of tagNames.values()) categories.add(name);
     const threads = [...active.threads.filter((t) => t.parent_id === forum.id), ...(await archivedThreads(env, forum.id))];
     const listings = await Promise.all(threads.map((t) => loadListing(env, t.id)));
     for (const [i, thread] of threads.entries()) {
@@ -89,7 +93,7 @@ export async function buildIndex(env: Env): Promise<FeedIndex> {
     }
   }
   modules.sort(newestFirst);
-  const index: FeedIndex = { updated: Date.now(), modules, guild, forums };
+  const index: FeedIndex = { updated: Date.now(), modules, categories: [...categories], guild, forums };
   await env.FEED.put("index", JSON.stringify(index));
   return index;
 }

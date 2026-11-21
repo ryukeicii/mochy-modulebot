@@ -137,6 +137,7 @@ const env: Env = {
   FORUMS: '[{"id": "free"}, {"id": "paid", "paid": true}]',
   INVITE_URL: "https://discord.gg/test",
   PUBLISHER_ROLE: "role-publisher",
+  CHART_KEEPERS: "keeper, other-keeper",
   APP_REDIRECT: "mochy-modules://signed-in",
 };
 const pending: Promise<unknown>[] = [];
@@ -336,6 +337,26 @@ test("publishing by link or as a web page, and hidden messages", async () => {
   assert.equal(store["1001"].install, "zip");
   assert.ok(store["1001"].size > 0, "the hidden post kept its zip");
   hideEverything = false;
+});
+
+test("the chart keepers fill best from community", async () => {
+  const member = await signIn("member");
+  const setChart = (who: string, lvl: number, post: string) =>
+    slash({ type: 2, channel_id: "elsewhere", data: { name: "setchart", options: [{ name: "lvl", value: lvl }, { name: "post", value: post }] }, member: { user: { id: who }, permissions: String(1n << 3n) } });
+  const store = async () => (await (await call("/modules", member)).json()) as { chart: string[]; categories: string[] };
+
+  assert.match((await setChart("maker", 1, "1001")).answer ?? "", /Only the chart keepers/);
+  assert.equal((await setChart("keeper", 1, "https://discord.com/channels/916351383341522994/1001")).answer, done("**Liquid Glass** is #1 on the chart."));
+  assert.equal((await setChart("other-keeper", 3, "3001")).answer, done("**Renamed Thing** is #3 on the chart."));
+  assert.deepEqual((await store()).chart, ["1001", "3001"]);
+  // moving a module clears its old spot, and clear empties one
+  await setChart("keeper", 2, "1001");
+  assert.deepEqual(JSON.parse(String(await env.FEED.get("chart"))), [null, "1001", "3001", null, null]);
+  assert.equal((await setChart("keeper", 3, "clear")).answer, done("Spot 3 on the chart is empty now."));
+  assert.deepEqual((await store()).chart, ["1001"]);
+  assert.match((await setChart("keeper", 6, "1001")).answer ?? "", /from 1 to 5/);
+  assert.match((await setChart("keeper", 1, "nonsense")).answer ?? "", /its link, or its id/);
+  assert.deepEqual((await store()).categories, ["Looks"], "the forum tags are the store's categories");
 });
 
 // a command that answers straight away, with what it said and whether everyone sees it

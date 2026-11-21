@@ -36,6 +36,8 @@ export interface Env {
   INVITE_URL: string;
   // the role someone gets for publishing a module
   PUBLISHER_ROLE: string;
+  // who may use /setchart: discord user ids, split by commas
+  CHART_KEEPERS: string;
   // where the app waits for the sign-in to come back
   APP_REDIRECT: string;
 }

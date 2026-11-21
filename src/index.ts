@@ -5,6 +5,7 @@ import type { Context, Env } from "./env.ts";
 import { buildIndex, loadIndex, type FeedIndex, type FeedModule } from "./feed.ts";
 import { interaction } from "./interactions.ts";
 import type { Picture } from "./listing.ts";
+import { loadChart } from "./chart.ts";
 import { canView } from "./permissions.ts";
 import { forget, fromTokens, load, newSessionId, save, type Session } from "./session.ts";
 
@@ -36,7 +37,13 @@ export default {
         ctx.waitUntil(buildIndex(env));
         return json({ error: "warming_up" }, 503);
       }
-      if (request.method === "GET" && url.pathname === "/modules") return json({ updated: index.updated, me: me(session, env), modules: listFor(index, session, url.origin) });
+      if (request.method === "GET" && url.pathname === "/modules") {
+        const modules = listFor(index, session, url.origin);
+        // only spots holding a module this person can see; the app keeps them in chart order
+        const shown = new Set(modules.map((m) => m.id));
+        const chart = (await loadChart(env)).filter((id): id is string => !!id && shown.has(id));
+        return json({ updated: index.updated, me: me(session, env), chart, categories: index.categories ?? [], modules });
+      }
       const zip = url.pathname.match(/^\/modules\/(\d+)\/zip$/);
       if (request.method === "GET" && zip) return await download(zip[1], index, session, env);
       return json({ error: "not_found" }, 404);

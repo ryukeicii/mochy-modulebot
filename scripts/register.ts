@@ -32,7 +32,7 @@ const commands = CommandList.map((c) => ({
   type: 1,
   name: c.name,
   description: c.description,
-  ...(c.takesMessage ? { options: [{ name: "message", type: 3, required: true, description: "The message's link, or its id when you're in the post" }] } : {}),
+  ...(c.options ? { options: c.options } : c.takesMessage ? { options: [{ name: "message", type: 3, required: true, description: "The message's link, or its id when you're in the post" }] } : {}),
 }));
 
 // a server's own command shows up straight away; a global one can take an hour
