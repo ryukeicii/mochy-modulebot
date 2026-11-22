@@ -7,10 +7,11 @@ compatibility_date = "2026-11-01"
 [triggers]
 crons = ["*/10 * * * *"]
 
-# the module index, the icons and the sign-in sessions; make it with: npx wrangler kv namespace create FEED
-[[kv_namespaces]]
-binding = "FEED"
-id = "694913b53a714a4ab8c43652862ad998"
+# the module index, listings, icons, pictures and sign-in sessions; make it with: npx wrangler d1 create mochy-module-feed
+[[d1_databases]]
+binding = "DB"
+database_name = "mochy-module-feed"
+database_id = "3971e69f-ae7c-43dc-9aea-36ad9093a1ba"
 
 # keeps the bot online in discord by holding its gateway connection
 [[durable_objects.bindings]]

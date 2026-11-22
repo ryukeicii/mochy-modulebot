@@ -64,7 +64,8 @@ answers that it can't see what's in messages, Message Content Intent is off in t
 2. **The worker.**
    ```
    npm install
-   npx wrangler kv namespace create FEED     # put the id it prints into wrangler.toml
+   npx wrangler d1 create mochy-module-feed                       # put the database_id it prints into wrangler.toml
+   npx wrangler d1 execute mochy-module-feed --remote --file=schema.sql
    npx wrangler secret put BOT_TOKEN
    npx wrangler secret put CLIENT_SECRET
    npx wrangler secret put STORE_KEY        # the same key as MODULE_STORE_KEY in Mochy's local.properties and GitHub secrets

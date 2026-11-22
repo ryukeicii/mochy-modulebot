@@ -2,8 +2,9 @@
 
 import { asUser, DiscordError, tokens, type Tokens } from "./discord.ts";
 import type { Env } from "./env.ts";
+import { deleteKey, getJson, putJson } from "./store.ts";
 
-// roles and membership are asked again this often, so a newly bought role or a kick shows up while keeping kv writes well within the free tier
+// roles and membership are asked again this often, so a newly bought role or a kick shows up while keeping writes minimal
 const RecheckMs = 60 * 60 * 1000;
 const SessionTtlSeconds = 60 * 24 * 60 * 60;
 
@@ -32,11 +33,11 @@ export function newSessionId(): string {
 }
 
 export async function save(env: Env, id: string, session: Session): Promise<void> {
-  await env.FEED.put(await keyOf(id), JSON.stringify(session), { expirationTtl: SessionTtlSeconds });
+  await putJson(env, await keyOf(id), session, SessionTtlSeconds);
 }
 
 export async function forget(env: Env, id: string): Promise<void> {
-  await env.FEED.delete(await keyOf(id));
+  await deleteKey(env, await keyOf(id));
 }
 
 export async function fromTokens(env: Env, granted: Tokens): Promise<Session> {
@@ -61,9 +62,9 @@ export async function fromTokens(env: Env, granted: Tokens): Promise<Session> {
 export async function load(env: Env, request: Request): Promise<{ id: string; session: Session } | null> {
   const id = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "").trim();
   if (!id || !/^[0-9a-f]{64}$/.test(id)) return null;
-  const stored = (await env.FEED.get(await keyOf(id), "json")) as Session | null;
+  const stored = await getJson<Session>(env, await keyOf(id));
   if (!stored) return null;
-  // the stored time isn't bumped on every check (that would be a kv write), so this worker remembers when it last asked discord
+  // the stored time isn't bumped on every check, so this worker remembers when it last asked discord
   const lastAsked = askedAt.get(id);
   if (stored.member && lastAsked && Date.now() - lastAsked < RecheckMs) return { id, session: stored };
   const session = await recheck(env, stored, false);
@@ -72,7 +73,6 @@ export async function load(env: Env, request: Request): Promise<{ id: string; se
     await forget(env, id).catch(() => {});
     return null;
   }
-  // a full kv daily write quota shouldn't break /modules for people who are already signed in
   if (changed(stored, session)) await save(env, id, session).catch((e) => console.log(`couldn't update session: ${(e as Error).message}`));
   return { id, session };
 }

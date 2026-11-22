@@ -2,32 +2,51 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import worker from "../src/index.ts";
 import { CommandList } from "../src/catalog.ts";
-import type { Env, KV } from "../src/env.ts";
+import type { D1, D1Statement, Env } from "../src/env.ts";
+import { BlobChunkBytes, getBlob, getJson, getText, pruneExpired, putBlob, putJson, putText } from "../src/store.ts";
 
 const zipBytes = readFileSync(new URL("./fixtures/look.zip", import.meta.url));
+const schemaSql = readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 const View = String(1 << 10);
 
-// a kv that keeps everything in a map, metadata included
-function memoryKv(): KV {
-  const store = new Map<string, { value: string | Uint8Array; metadata?: unknown }>();
-  const read = (key: string, type?: string) => {
-    const hit = store.get(key);
-    if (!hit) return null;
-    if (type === "json") return JSON.parse(hit.value as string);
-    if (type === "arrayBuffer") return (hit.value as Uint8Array).slice().buffer;
-    return hit.value as string;
+// real sqlite in memory, returning blobs as number[] the way cloudflare d1 does in workers
+function memoryD1(): D1 {
+  const db = new DatabaseSync(":memory:");
+  db.exec(schemaSql);
+  const normalizeRow = (row: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) out[k] = v instanceof Uint8Array ? [...v] : v;
+    return out;
   };
-  return {
-    get: (async (key: string, type?: string) => read(key, type)) as KV["get"],
-    put: async (key, value, options) => {
-      store.set(key, { value: typeof value === "string" ? value : new Uint8Array(value as ArrayBuffer), metadata: options?.metadata });
+  const make = (query: string, params: unknown[] = []): D1Statement & { _run: () => unknown } => ({
+    bind: (...values) => make(query, values),
+    first: async <T = Record<string, unknown>>() => {
+      const row = db.prepare(query).get(...(params as any[])) as Record<string, unknown> | undefined;
+      return row ? (normalizeRow(row) as T) : null;
     },
-    getWithMetadata: async (key) => ({ value: read(key, "arrayBuffer") as ArrayBuffer | null, metadata: store.get(key)?.metadata ?? null }),
-    delete: async (key) => {
-      store.delete(key);
+    all: async <T = Record<string, unknown>>() => {
+      const rows = db.prepare(query).all(...(params as any[])) as Record<string, unknown>[];
+      return { results: rows.map((r) => normalizeRow(r) as T) };
+    },
+    run: async () => db.prepare(query).run(...(params as any[])),
+    _run: () => db.prepare(query).run(...(params as any[])),
+  });
+  return {
+    prepare: (query) => make(query),
+    batch: async (statements) => {
+      db.exec("BEGIN");
+      try {
+        const results = statements.map((s) => (s as D1Statement & { _run: () => unknown })._run());
+        db.exec("COMMIT");
+        return results;
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
     },
   };
 }
@@ -135,7 +154,7 @@ const keys = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign"
 const publicKey = Buffer.from(await crypto.subtle.exportKey("raw", keys.publicKey)).toString("hex");
 
 const env: Env = {
-  FEED: memoryKv(),
+  DB: memoryD1(),
   PRESENCE: { idFromName: () => "bot", get: () => ({ fetch: async () => new Response("{}") }) },
   BOT_TOKEN: "bot",
   CLIENT_SECRET: "secret",
@@ -191,8 +210,8 @@ async function signIn(who: string): Promise<string> {
 const listing = { publisher: "maker", description: "", banner: null, previews: [], icon: null, publishedAt: 1 };
 
 test("the whole round trip", async () => {
-  await env.FEED.put("listing:1001", JSON.stringify(listing));
-  await env.FEED.put("listing:2001", JSON.stringify(listing));
+  await putJson(env, "listing:1001", listing);
+  await putJson(env, "listing:2001", listing);
   const member = await signIn("member");
   // nothing read yet: the first ask starts the cron's work and says to come back
   assert.equal((await call("/modules", member)).status, 503);
@@ -271,20 +290,20 @@ test("/update picks a message's zip and keeps it", async () => {
   assert.equal(done.type, 5);
   assert.equal(done.answer, updated);
   assert.equal((await update("maker", "999")).answer, updated);
-  assert.equal((await env.FEED.get("index", "json") as { modules: Array<{ id: string; zip: { message: string } }> }).modules.find((m) => m.id === "1001")?.zip.message, "999");
+  assert.equal((await getJson<{ modules: Array<{ id: string; zip: { message: string } }> }>(env, "index"))?.modules.find((m) => m.id === "1001")?.zip.message, "999");
 
   // the next cron run keeps the pick even though a newer zip from the author sits in the post
   freeThread.last_message_id = "1003";
   await worker.scheduled({}, env, ctx);
   await Promise.all(pending);
-  assert.equal((await env.FEED.get("index", "json") as { modules: Array<{ id: string; zip: { message: string } }> }).modules.find((m) => m.id === "1001")?.zip.message, "999");
+  assert.equal((await getJson<{ modules: Array<{ id: string; zip: { message: string } }> }>(env, "index"))?.modules.find((m) => m.id === "1001")?.zip.message, "999");
 
   // but a zip the author posts after the pick takes over
   later.unshift({ ...olderZip, id: String(1n << 62n), attachments: [{ ...olderZip.attachments[0], id: "a-new" }] });
   freeThread.last_message_id = String(1n << 62n);
   await worker.scheduled({}, env, ctx);
   await Promise.all(pending);
-  assert.equal((await env.FEED.get("index", "json") as { modules: Array<{ id: string; zip: { message: string } }> }).modules.find((m) => m.id === "1001")?.zip.message, String(1n << 62n));
+  assert.equal((await getJson<{ modules: Array<{ id: string; zip: { message: string } }> }>(env, "index"))?.modules.find((m) => m.id === "1001")?.zip.message, String(1n << 62n));
 
   assert.match((await update("fan", "999")).answer ?? "", /Only the person who made this post can change it/);
   assert.equal((await update("mod", "999", String(1n << 34n))).answer, updated);
@@ -410,7 +429,7 @@ test("the chart keepers fill best from community", async () => {
   assert.deepEqual((await store()).chart, ["1001", "3001"]);
   // moving a module clears its old spot, and clear empties one
   await setChart("keeper", 2, "1001");
-  assert.deepEqual(JSON.parse(String(await env.FEED.get("chart"))), [null, "1001", "3001", null, null]);
+  assert.deepEqual(await getJson(env, "chart"), [null, "1001", "3001", null, null]);
   assert.equal((await setChart("keeper", 3, "clear")).answer, done("Spot 3 on the chart is empty now."));
   assert.deepEqual((await store()).chart, ["1001"]);
   assert.match((await setChart("keeper", 6, "1001")).answer ?? "", /from 1 to 5/);
@@ -567,7 +586,7 @@ test("/publish with a separate module arg and /unpublish remove a post cleanly",
   store = await listed();
   assert.equal(store.modules.find((m) => m.id === "3001"), undefined);
   assert.ok(!store.chart.includes("3001"));
-  assert.equal(await env.FEED.get("listing:3001"), null);
+  assert.equal(await getText(env, "listing:3001"), null);
 
   // running /unpublish again reports it isn't published
   const again = await slash({
@@ -577,4 +596,30 @@ test("/publish with a separate module arg and /unpublish remove a post cleanly",
     member: { user: { id: "mod" }, permissions: String(1n << 34n) },
   });
   assert.match(again.answer ?? "", /isn't in the store yet/);
+});
+
+test("d1 store chunks large blobs and expires timed keys", async () => {
+  const big = new Uint8Array(BlobChunkBytes * 2 + 12345);
+  for (let i = 0; i < big.length; i++) big[i] = (i * 31) & 0xff;
+  await putBlob(env, "picture:9999:big", big, "image/webp");
+  const loaded = await getBlob(env, "picture:9999:big");
+  assert.ok(loaded);
+  assert.equal(loaded.type, "image/webp");
+  assert.equal(loaded.bytes.byteLength, big.byteLength);
+  assert.deepEqual(loaded.bytes, big);
+
+  // replacing a large blob with a smaller one drops the leftover chunks
+  const small = new Uint8Array([1, 2, 3, 4]);
+  await putBlob(env, "picture:9999:big", small, "image/png");
+  const replaced = await getBlob(env, "picture:9999:big");
+  assert.ok(replaced);
+  assert.equal(replaced.type, "image/png");
+  assert.deepEqual(replaced.bytes, small);
+
+  // expired keys read as null and pruneExpired deletes them
+  await putText(env, "session:expired", "old", -10);
+  assert.equal(await getText(env, "session:expired"), null);
+  await pruneExpired(env);
+  const raw = await env.DB.prepare("SELECT key FROM kv WHERE key = ?").bind("session:expired").first();
+  assert.equal(raw, null);
 });

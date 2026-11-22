@@ -5,14 +5,17 @@ export interface Context {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-// the little of cloudflare's kv this uses, typed here so the worker needs no packages
-export interface KV {
-  get(key: string, type: "json"): Promise<unknown>;
-  get(key: string, type: "arrayBuffer"): Promise<ArrayBuffer | null>;
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string | ArrayBuffer | Uint8Array, options?: { expirationTtl?: number; metadata?: unknown }): Promise<void>;
-  getWithMetadata(key: string, type: "arrayBuffer"): Promise<{ value: ArrayBuffer | null; metadata: unknown }>;
-  delete(key: string): Promise<void>;
+// the little of cloudflare's d1 this uses, typed here so the worker needs no packages
+export interface D1Statement {
+  bind(...values: unknown[]): D1Statement;
+  first<T = Record<string, unknown>>(): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  run(): Promise<unknown>;
+}
+
+export interface D1 {
+  prepare(query: string): D1Statement;
+  batch(statements: D1Statement[]): Promise<unknown[]>;
 }
 
 // the durable object that keeps the bot online, reached by name
@@ -22,7 +25,7 @@ export interface Objects {
 }
 
 export interface Env {
-  FEED: KV;
+  DB: D1;
   PRESENCE: Objects;
   // secrets: wrangler secret put BOT_TOKEN, CLIENT_SECRET and STORE_KEY
   BOT_TOKEN: string;

@@ -6,6 +6,7 @@ import { isZip, pickZip, refreshPost, removePost, type FeedModule } from "./feed
 import { cleanTitle } from "./posts.ts";
 import { ChartSize, loadChart, saveChart } from "./chart.ts";
 import { deleteListing, dropPictures, isImage, loadListing, MaxPictureBytes, MaxPreviews, picturesOf, savePicture, saveListing, type Install, type Listing, type PackItem } from "./listing.ts";
+import { putBlob } from "./store.ts";
 import { readModuleZip } from "./zip.ts";
 
 // mods can change anyone's post: administrator, manage messages or manage threads
@@ -399,7 +400,7 @@ async function packZip(env: Env, postId: string, messageId: string, zip: Attachm
   let icon = null;
   if (read.icon) {
     icon = { id: `i${zip.id}`, type: read.icon.type };
-    await env.FEED.put(`picture:${postId}:${icon.id}`, read.icon.bytes, { metadata: { type: icon.type } });
+    await putBlob(env, `picture:${postId}:${icon.id}`, read.icon.bytes, icon.type);
   }
   return {
     kind: "zip",

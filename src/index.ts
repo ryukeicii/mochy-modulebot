@@ -10,6 +10,7 @@ import { loadChart } from "./chart.ts";
 import { signedByOfficialBuild } from "./official.ts";
 import { canView } from "./permissions.ts";
 import { forget, fromTokens, load, newSessionId, save, type Session } from "./session.ts";
+import { getBlob, getText, pruneExpired, putText } from "./store.ts";
 
 export { Presence } from "./presence.ts";
 
@@ -32,9 +33,9 @@ export default {
         return await login(url, env);
       }
       if (request.method === "GET" && url.pathname === "/callback") return await callback(url, env);
-      if (request.method === "GET" && url.pathname.startsWith("/icons/")) return await icon(url.pathname.slice(7), env);
-      if (request.method === "GET" && url.pathname.startsWith("/pictures/")) return await picture(url.pathname.slice(10), env);
-      // check the official build signature before touching kv or discord, so unsigned traffic can't trigger session lookups or token refreshes
+      if (request.method === "GET" && url.pathname.startsWith("/icons/")) return await icon(url.pathname.slice(7), request, env, ctx);
+      if (request.method === "GET" && url.pathname.startsWith("/pictures/")) return await picture(url.pathname.slice(10), request, env, ctx);
+      // check the official build signature before touching d1 or discord, so unsigned traffic can't trigger session lookups or token refreshes
       const bearer = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
       const signature = [request.headers.get("X-Mochy-Time"), request.headers.get("X-Mochy-Sign")] as const;
       if (!(await signedByOfficialBuild(env, signature[0], signature[1], request.method, url.pathname, bearer))) return unofficial();
@@ -72,6 +73,7 @@ export default {
     ctx.waitUntil(syncCommands(env));
     ctx.waitUntil(buildIndex(env));
     ctx.waitUntil(keepOnline(env));
+    ctx.waitUntil(pruneExpired(env).catch((e) => console.log(`couldn't prune expired entries: ${(e as Error).message}`)));
   },
 };
 
@@ -81,14 +83,13 @@ async function syncCommands(env: Env): Promise<void> {
     const payload = commandPayloads();
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(payload)));
     const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    if ((await env.FEED.get("commands_hash")) === hash) {
+    if ((await getText(env, "commands_hash")) === hash) {
       commandsCheckedAt = -1;
       return;
     }
     await botWrite(env, "PUT", `/applications/${env.CLIENT_ID}/guilds/${env.GUILD_ID}/commands`, payload);
-    // latch synced once discord accepted the commands, even if kv daily writes are full
     commandsCheckedAt = -1;
-    await env.FEED.put("commands_hash", hash).catch((e) => console.log(`couldn't store commands_hash: ${(e as Error).message}`));
+    await putText(env, "commands_hash", hash).catch((e) => console.log(`couldn't store commands_hash: ${(e as Error).message}`));
   } catch (e) {
     console.log(`couldn't sync slash commands: ${(e as Error).message}`);
   }
@@ -272,20 +273,42 @@ async function download(postId: string, index: FeedIndex, session: Session, env:
   });
 }
 
-// a store page's banner, previews or icon; each picture's address carries its own id, so it can be kept for good
-async function picture(path: string, env: Env): Promise<Response> {
-  const parts = path.match(/^(\d+)\/(\w+)$/);
-  if (!parts) return json({ error: "not_found" }, 404);
-  const { value, metadata } = await env.FEED.getWithMetadata(`picture:${parts[1]}:${parts[2]}`, "arrayBuffer");
-  if (!value) return json({ error: "not_found" }, 404);
-  const type = (metadata as { type?: string } | null)?.type ?? "image/png";
-  return new Response(value, { headers: { "Content-Type": type, "Cache-Control": "public, max-age=31536000, immutable" } });
+// cloudflare's built-in cache api when running on a custom domain (no-op on workers.dev and absent in node tests)
+interface EdgeCache {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
 }
 
-async function icon(postId: string, env: Env): Promise<Response> {
+function edgeCache(): EdgeCache | null {
+  return (globalThis as { caches?: { default?: EdgeCache } }).caches?.default ?? null;
+}
+
+// a store page's banner, previews or icon; each picture's address carries its own id, so it can be kept for good
+async function picture(path: string, request: Request, env: Env, ctx: Context): Promise<Response> {
+  const parts = path.match(/^(\d+)\/(\w+)$/);
+  if (!parts) return json({ error: "not_found" }, 404);
+  const cache = edgeCache();
+  const cached = cache ? await cache.match(request) : undefined;
+  if (cached) return cached;
+  const blob = await getBlob(env, `picture:${parts[1]}:${parts[2]}`);
+  if (!blob) return json({ error: "not_found" }, 404);
+  const response = new Response(blob.bytes as BodyInit, {
+    headers: { "Content-Type": blob.type, "Cache-Control": "public, max-age=31536000, immutable" },
+  });
+  if (cache) ctx.waitUntil(cache.put(request, response.clone()));
+  return response;
+}
+
+async function icon(postId: string, request: Request, env: Env, ctx: Context): Promise<Response> {
   if (!/^\d+$/.test(postId)) return json({ error: "not_found" }, 404);
-  const { value, metadata } = await env.FEED.getWithMetadata(`icon:${postId}`, "arrayBuffer");
-  if (!value) return json({ error: "not_found" }, 404);
-  const type = (metadata as { type?: string } | null)?.type ?? "image/png";
-  return new Response(value, { headers: { "Content-Type": type, "Cache-Control": "public, max-age=3600" } });
+  const cache = edgeCache();
+  const cached = cache ? await cache.match(request) : undefined;
+  if (cached) return cached;
+  const blob = await getBlob(env, `icon:${postId}`);
+  if (!blob) return json({ error: "not_found" }, 404);
+  const response = new Response(blob.bytes as BodyInit, {
+    headers: { "Content-Type": blob.type, "Cache-Control": "public, max-age=3600" },
+  });
+  if (cache) ctx.waitUntil(cache.put(request, response.clone()));
+  return response;
 }
