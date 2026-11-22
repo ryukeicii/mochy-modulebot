@@ -4,9 +4,11 @@ import { helpText } from "./catalog.ts";
 import { Commands, type Interaction, type Outcome } from "./commands.ts";
 import { deleteReply, editReply, followUp } from "./discord.ts";
 import type { Context, Env } from "./env.ts";
+import { handlePromptComponent } from "./prompt.ts";
 
 const Ping = 1;
 const Command = 2;
+const Component = 3;
 const Pong = 1;
 const Answer = 4;
 const ThinkingAnswer = 5;
@@ -33,28 +35,37 @@ export async function interaction(request: Request, env: Env, ctx: Context): Pro
     ctx.waitUntil(answer(event, env, run));
     return reply({ type: ThinkingAnswer, data: { flags: OnlyYou } });
   }
+  if (event.type === Component && event.data?.custom_id?.startsWith("prompt:")) {
+    ctx.waitUntil(answer(event, env, handlePromptComponent));
+    return reply({ type: ThinkingAnswer, data: { flags: OnlyYou } });
+  }
   return reply({ type: Answer, data: { content: "I don't know that command.", flags: OnlyYou } });
 }
 
 // problems are told only to whoever ran it; a done command is a new public message in the post
-async function answer(event: Interaction, env: Env, run: (event: Interaction, env: Env) => Promise<Outcome>): Promise<void> {
-  let outcome: Outcome;
+async function answer(event: Interaction, env: Env, run: (event: Interaction, env: Env) => Promise<Outcome & { silent?: boolean }>): Promise<void> {
+  const label = event.data?.name ? `/${event.data.name}` : (event.data?.custom_id ?? "component");
+  let outcome: Outcome & { silent?: boolean };
   try {
     outcome = await run(event, env);
   } catch (e) {
-    console.log(`/${event.data?.name} failed: ${(e as Error).stack ?? e}`);
+    console.log(`${label} failed: ${(e as Error).stack ?? e}`);
     outcome = { text: "Something went wrong reading this post. Try again in a minute." };
   }
   const { application_id: app, token } = event;
   try {
     // the first follow-up after a "thinking..." would take its place and stay private, so the private one is answered first
     await editReply(app, token, outcome.note ?? outcome.text);
+    if (outcome.silent) {
+      await deleteReply(app, token);
+      return;
+    }
     if (!outcome.done) return;
     await followUp(app, token, outcome.text);
     // with a note to keep, the private answer stays; otherwise it's cleared so only the public one is left
     if (!outcome.note) await deleteReply(app, token);
   } catch (e) {
-    console.log(`couldn't answer /${event.data?.name}: ${(e as Error).message}`);
+    console.log(`couldn't answer ${label}: ${(e as Error).message}`);
   }
 }
 

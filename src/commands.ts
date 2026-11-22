@@ -26,7 +26,8 @@ export interface Interaction {
   application_id: string;
   token: string;
   channel_id?: string;
-  data?: { name: string; options?: Array<{ name: string; value: string | number | boolean }> };
+  message?: { id: string };
+  data?: { name?: string; custom_id?: string; options?: Array<{ name: string; value: string | number | boolean }> };
   member?: { user: { id: string }; permissions: string; roles?: string[] };
 }
 
@@ -205,7 +206,7 @@ async function publishWithLink(thread: Thread, message: Message, banner: Attachm
 }
 
 // the first web address in a message, including bare github.com links, without brackets or trailing punctuation
-function firstLink(content: string): string | null {
+export function firstLink(content: string): string | null {
   for (const match of content.matchAll(/https?:\/\/[^\s<>()*`"']+/gi)) {
     const clean = match[0].replace(/^http:\/\//i, "https://").replace(/[.,!?;:]+$/, "");
     // skip discord channel/message links when scanning for a module address

@@ -87,6 +87,7 @@ const answers: string[] = [];
 // zips posted later, newest first, put at the top of the free post
 const later: Array<typeof olderZip> = [];
 
+const deletedMessages: string[] = [];
 let botCalls = 0;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -106,6 +107,10 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   if (auth.startsWith("Bot ")) {
     botCalls++;
+    if (init?.method === "DELETE" && path.includes("/messages/")) {
+      deletedMessages.push(path);
+      return new Response(null, { status: 204 });
+    }
     if (init?.method === "PUT" && path === "/applications/client/guilds/g/commands") {
       return ok([]);
     }
@@ -622,4 +627,35 @@ test("d1 store chunks large blobs and expires timed keys", async () => {
   await pruneExpired(env);
   const raw = await env.DB.prepare("SELECT key FROM kv WHERE key = ?").bind("session:expired").first();
   assert.equal(raw, null);
+});
+
+test("prompt buttons publish, update, dismiss and reject outsiders", async () => {
+  const click = (who: string, customId: string, channel = "3001", promptMsg = "7777", permissions = "0") =>
+    slash({
+      type: 3,
+      channel_id: channel,
+      message: { id: promptMsg },
+      data: { component_type: 2, custom_id: customId },
+      member: { user: { id: who }, permissions },
+    });
+
+  // outsider cannot use the buttons
+  const denied = await click("fan", "prompt:publish:3001:3004");
+  assert.match(denied.answer ?? "", /Only the person who made this post/);
+  assert.equal(deletedMessages.length, 0);
+
+  // author clicks Publish -> publishes and deletes the prompt message
+  const pub = await click("maker2", "prompt:publish:3001:3004");
+  assert.equal(pub.answer, done("Published **Renamed Thing** 2.2."));
+  assert.equal(deletedMessages.at(-1), "/channels/3001/messages/7777");
+
+  // author clicks Update -> updates and deletes the prompt message
+  const upd = await click("maker", "prompt:update:1001:999", "1001", "7778");
+  assert.equal(upd.answer, done("Updated **Liquid Glass** to 2.2."));
+  assert.equal(deletedMessages.at(-1), "/channels/1001/messages/7778");
+
+  // author clicks Nah/Dismiss -> deletes prompt silently
+  const dismissed = await click("maker2", "prompt:dismiss:3001:3004", "3001", "7779");
+  assert.equal(dismissed.answer, "Dismissed. | private answer cleared");
+  assert.equal(deletedMessages.at(-1), "/channels/3001/messages/7779");
 });

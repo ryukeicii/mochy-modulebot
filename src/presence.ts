@@ -1,6 +1,8 @@
-// keeps the bot online in discord: one durable object holds the gateway connection, and its alarm sends the heartbeats and reconnects it
+// keeps the bot online in discord and watches module forums for new posts and zip uploads so it can offer one-click publish/update buttons
 
-import type { Env } from "./env.ts";
+import { bot, type Message, type Thread } from "./discord.ts";
+import { forumsOf, type Env } from "./env.ts";
+import { GatewayIntents, looksPromptable, promptForMessage } from "./prompt.ts";
 
 const Gateway = "https://gateway.discord.gg";
 const Query = "/?v=10&encoding=json";
@@ -30,6 +32,7 @@ interface Session {
   id: string | null;
   resumeUrl: string | null;
   seq: number | null;
+  intents?: number;
 }
 
 // the little of a durable object's state this uses, typed here so the worker needs no packages
@@ -56,6 +59,8 @@ export class Presence {
   private failures = 0;
   private session: Session | null = null;
   private savedSeq: number | null = null;
+  private threads = new Map<string, Thread | null>();
+  private prompted = new Set<string>();
   private state: ObjectState;
   private env: Env;
 
@@ -88,6 +93,10 @@ export class Presence {
 
   private async connect(): Promise<void> {
     this.session ??= (await this.state.storage.get<Session>("session")) ?? { id: null, resumeUrl: null, seq: null };
+    // when intents changed, start a fresh session so discord delivers the new events right away
+    if (this.session.id && this.session.intents !== GatewayIntents) {
+      this.session = { id: null, resumeUrl: null, seq: null };
+    }
     const resuming = !!(this.session.id && this.session.resumeUrl);
     const base = resuming ? this.session.resumeUrl!.replace(/^wss:/, "https:") : Gateway;
     try {
@@ -134,7 +143,7 @@ export class Presence {
         this.interval = payload.d.heartbeat_interval;
         const session = this.session!;
         if (session.id && session.resumeUrl) this.send({ op: Resume, d: { token: this.env.BOT_TOKEN, session_id: session.id, seq: session.seq } });
-        else this.send({ op: Identify, d: { token: this.env.BOT_TOKEN, intents: 0, properties: { os: "cloudflare", browser: "mochy-module-feed", device: "mochy-module-feed" }, presence: { status: "online", since: null, activities: [], afk: false } } });
+        else this.send({ op: Identify, d: { token: this.env.BOT_TOKEN, intents: GatewayIntents, properties: { os: "cloudflare", browser: "mochy-module-feed", device: "mochy-module-feed" }, presence: { status: "online", since: null, activities: [], afk: false } } });
         // discord asks for the first heartbeat at a random point in the first interval, so a crowd of bots doesn't beat together
         await this.next(Math.floor(this.interval * Math.random()));
         break;
@@ -158,7 +167,7 @@ export class Presence {
         break;
       case Dispatch:
         if (payload.t === "READY") {
-          this.session = { id: payload.d.session_id, resumeUrl: payload.d.resume_gateway_url, seq: payload.s ?? null };
+          this.session = { id: payload.d.session_id, resumeUrl: payload.d.resume_gateway_url, seq: payload.s ?? null, intents: GatewayIntents };
           await this.state.storage.put("session", this.session);
           this.savedSeq = this.session.seq;
         }
@@ -166,8 +175,47 @@ export class Presence {
           this.failures = 0;
           console.log(payload.t === "READY" ? "online" : "back online");
         }
+        if (payload.t === "THREAD_CREATE" && payload.d) {
+          const thread = payload.d as Thread & { guild_id?: string };
+          if (thread.guild_id === this.env.GUILD_ID && forumsOf(this.env).some((f) => f.id === thread.parent_id)) {
+            this.rememberThread(thread.id, thread);
+          }
+        }
+        if (payload.t === "MESSAGE_CREATE" && payload.d) {
+          await this.onMessage(payload.d as Message & { channel_id: string; guild_id?: string; author: Message["author"] & { bot?: boolean } });
+        }
         break;
     }
+  }
+
+  private async onMessage(message: Message & { channel_id: string; guild_id?: string; author: Message["author"] & { bot?: boolean } }): Promise<void> {
+    if (message.guild_id !== this.env.GUILD_ID || !looksPromptable(message)) return;
+    if (this.prompted.has(message.id)) return;
+    let thread = this.threads.get(message.channel_id);
+    if (thread === undefined) {
+      const fetched = await bot<Thread>(this.env, `/channels/${message.channel_id}`).catch(() => null);
+      thread = fetched && forumsOf(this.env).some((f) => f.id === fetched.parent_id) ? fetched : null;
+      this.rememberThread(message.channel_id, thread);
+    }
+    if (!thread) return;
+    this.rememberPrompted(message.id);
+    await promptForMessage(this.env, thread, message).catch((e) => console.log(`couldn't post module prompt: ${(e as Error).message}`));
+  }
+
+  private rememberThread(id: string, thread: Thread | null): void {
+    if (this.threads.size >= 500) {
+      const oldest = this.threads.keys().next().value;
+      if (oldest !== undefined) this.threads.delete(oldest);
+    }
+    this.threads.set(id, thread);
+  }
+
+  private rememberPrompted(id: string): void {
+    if (this.prompted.size >= 500) {
+      const oldest = this.prompted.values().next().value;
+      if (oldest !== undefined) this.prompted.delete(oldest);
+    }
+    this.prompted.add(id);
   }
 
   // closing with a code other than 1000 keeps the session, so the next connection can resume it

@@ -58,9 +58,8 @@ answers that it can't see what's in messages, Message Content Intent is off in t
    - **General Information:** copy the *Public Key* into `PUBLIC_KEY` in `wrangler.toml` (slash commands are signed with it).
    - **OAuth2:** copy the client id and client secret, and add the redirect `https://<your worker>/callback`.
    - **Invite the bot** to Mochy's Bar with the `bot` and `applications.commands` scopes and *View Channels*, *Read Message
-     History* and *Manage Roles*, and make sure it can see every module forum, the paid ones included. Drag the bot's role
-     above the publisher role (`PUBLISHER_ROLE`), or it can't hand that one out. Discord sends `/update`
-     to the worker, and its answers go back through the command itself, so the bot needs no right to post.
+     History*, *Send Messages in Threads* and *Manage Roles*, and make sure it can see every module forum, the paid ones included. Drag the bot's role
+     above the publisher role (`PUBLISHER_ROLE`), or it can't hand that one out. *Send Messages in Threads* lets the bot reply with one-click Publish/Update buttons when a maker posts a new module or uploads a new `.zip`.
 2. **The worker.**
    ```
    npm install
